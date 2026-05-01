@@ -17,9 +17,11 @@ The custom agents omit `model`, so they inherit the parent session's selected mo
 
 | Agent | Mode | Use For |
 | --- | --- | --- |
+| `planner` | read-only | PRD breakdown, milestones, task order, dependencies, and validation criteria |
 | `protocol-researcher` | read-only | Codex app-server schema, JSON-RPC method/event names, M0 findings |
-| `runtime-worker` | write-capable | Bun TypeScript runtime implementation under `src/`, scripts, and package config |
-| `channel-adapter-worker` | write-capable | CLI, Telegram, Slack, approval UX, and adapter boundaries |
+| `runtime-implementer` | write-capable | Bun TypeScript runtime implementation under `src/`, scripts, and package config |
+| `adapter-implementer` | write-capable | CLI, Telegram, Slack, approval UX, and adapter boundaries |
+| `implementation-reviewer` | read-only | Implementation correctness, PRD fit, test coverage, and maintainability |
 | `security-reviewer` | read-only | Sandbox, approval, token, prompt-injection, and trust-boundary review |
 | `docs-prd-editor` | write-capable | README, PRD, M0 findings, and documentation consistency |
 
@@ -27,8 +29,12 @@ The custom agents omit `model`, so they inherit the parent session's selected mo
 
 Use subagents only when the work is meaningfully parallel:
 
-- One read-only protocol research pass while a runtime worker implements known code.
+- A planner pass before starting a broad milestone or ambiguous PRD slice.
+- One read-only protocol research pass while a runtime implementer handles known code.
+- An implementation review after a bounded code change is ready.
 - A security review after a bounded implementation is ready.
 - A docs pass after code changes settle.
 
 Avoid multiple write-capable agents touching the same files in parallel.
+
+For plan-first and implementation review loops, follow `docs/workflows.md`.

@@ -1,5 +1,5 @@
-name = "channel-adapter-worker"
-description = "Implementation worker for CLI, Telegram, Slack, and future channel adapters."
+name = "adapter-implementer"
+description = "Implementation agent for CLI, Telegram, Slack, and future channel adapters."
 model_reasoning_effort = "medium"
 nickname_candidates = ["Relay", "Bridge", "Channel"]
 developer_instructions = """

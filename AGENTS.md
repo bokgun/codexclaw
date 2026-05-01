@@ -25,10 +25,31 @@ codexclaw is a Bun + TypeScript OSS host for `codex app-server`. It should stay 
 
 Use project subagents only when the user explicitly asks for parallel work, delegation, or subagents.
 
+- `planner`: read-only PRD-to-milestone planning, task order, dependencies, and validation criteria.
 - `protocol-researcher`: read-only protocol/schema/M0 investigation.
-- `runtime-worker`: Bun TypeScript implementation in runtime code.
-- `channel-adapter-worker`: CLI, Telegram, Slack, and adapter implementation.
+- `runtime-implementer`: Bun TypeScript implementation in runtime code.
+- `adapter-implementer`: CLI, Telegram, Slack, and adapter implementation.
+- `implementation-reviewer`: read-only implementation correctness, PRD fit, tests, and maintainability review.
 - `security-reviewer`: read-only security and trust-boundary review.
 - `docs-prd-editor`: README, PRD, and M0 documentation consistency.
 
-Keep delegated write scopes disjoint. Prefer read-only agents for protocol research and security review.
+Keep delegated write scopes disjoint. Prefer read-only agents for planning, protocol research, implementation review, and security review.
+
+## Workflows
+
+Use `docs/workflows.md` as the repo workflow source of truth.
+
+Plan workflow:
+
+- Ask `planner` to create or propose a PRD-based plan.
+- Store the plan as `docs/plans/{YYYY-MM-DD}-{SUMMARY}.md`.
+- Ask `implementation-reviewer` to review the plan.
+- Triage and fix valid issues in the plan.
+- Re-review up to 5 total review rounds, or stop earlier when no valid issues remain.
+
+Implementation workflow:
+
+- Implement from an existing plan document using `runtime-implementer` or `adapter-implementer` as appropriate.
+- Ask both `implementation-reviewer` and `security-reviewer` to review the implementation.
+- Triage and fix valid issues.
+- Re-review up to 5 total review rounds, or stop earlier when no valid issues remain.

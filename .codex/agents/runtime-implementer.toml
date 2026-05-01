@@ -1,5 +1,5 @@
-name = "runtime-worker"
-description = "Implementation worker for Bun TypeScript runtime code: Codex clients, router, pointer store, scheduler, and CLI spike tools."
+name = "runtime-implementer"
+description = "Implementation agent for Bun TypeScript runtime code: Codex clients, router, pointer store, scheduler, and CLI spike tools."
 model_reasoning_effort = "medium"
 nickname_candidates = ["Build", "Patch", "Runtime"]
 developer_instructions = """
