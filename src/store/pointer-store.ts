@@ -10,7 +10,7 @@ import type {
   UserKey
 } from "../runtime/types.js";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 interface ThreadRow {
   user_key: string;
@@ -21,6 +21,7 @@ interface ThreadRow {
   is_active: number;
   last_routed_at: string | null;
   suppress_branch_until: string | null;
+  last_branch_suggested_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -49,6 +50,7 @@ export interface UpsertThreadInput {
   makeActive?: boolean;
   lastRoutedAt?: TimestampIso;
   suppressBranchUntil?: TimestampIso;
+  lastBranchSuggestedAt?: TimestampIso;
 }
 
 export interface SavePendingApprovalInput {
@@ -84,15 +86,16 @@ export class PointerStore {
         .query(
           `insert into threads (
             user_key, label, thread_id, status, is_default, is_active,
-            last_routed_at, suppress_branch_until, created_at, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_routed_at, suppress_branch_until, last_branch_suggested_at, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           on conflict(user_key, label) do update set
             thread_id = excluded.thread_id,
             status = excluded.status,
             is_default = max(threads.is_default, excluded.is_default),
             is_active = case when excluded.is_active = 1 then 1 else threads.is_active end,
             last_routed_at = coalesce(excluded.last_routed_at, threads.last_routed_at),
-            suppress_branch_until = excluded.suppress_branch_until,
+            suppress_branch_until = coalesce(excluded.suppress_branch_until, threads.suppress_branch_until),
+            last_branch_suggested_at = coalesce(excluded.last_branch_suggested_at, threads.last_branch_suggested_at),
             updated_at = excluded.updated_at`
         )
         .run(
@@ -104,6 +107,7 @@ export class PointerStore {
           input.makeActive ? 1 : 0,
           input.lastRoutedAt ?? null,
           input.suppressBranchUntil ?? null,
+          input.lastBranchSuggestedAt ?? null,
           now,
           now
         );
@@ -169,6 +173,31 @@ export class PointerStore {
       .query(`update threads set last_routed_at = ?, updated_at = ? where user_key = ? and label = ?`)
       .run(routedAt, new Date().toISOString(), userKey, label);
     return this.requireThread(userKey, label);
+  }
+
+  setSuppressBranchUntil(userKey: UserKey, label: ThreadLabel, suppressUntil: TimestampIso): ThreadRecord {
+    this.db
+      .query(`update threads set suppress_branch_until = ?, updated_at = ? where user_key = ? and label = ?`)
+      .run(suppressUntil, new Date().toISOString(), userKey, label);
+    return this.requireThread(userKey, label);
+  }
+
+  markBranchSuggested(userKey: UserKey, label: ThreadLabel, suggestedAt = new Date().toISOString()): ThreadRecord {
+    this.db
+      .query(`update threads set last_branch_suggested_at = ?, updated_at = ? where user_key = ? and label = ?`)
+      .run(suggestedAt, new Date().toISOString(), userKey, label);
+    return this.requireThread(userKey, label);
+  }
+
+  getLastBranchSuggestedAt(userKey: UserKey): TimestampIso | undefined {
+    const row = this.db
+      .query<{ last_branch_suggested_at: string | null }, [string]>(
+        `select max(last_branch_suggested_at) as last_branch_suggested_at
+         from threads
+         where user_key = ?`
+      )
+      .get(userKey);
+    return row?.last_branch_suggested_at ?? undefined;
   }
 
   savePendingApproval(input: SavePendingApprovalInput): PendingApprovalRecord {
@@ -252,6 +281,7 @@ export class PointerStore {
           is_active integer not null default 0 check(is_active in (0, 1)),
           last_routed_at text,
           suppress_branch_until text,
+          last_branch_suggested_at text,
           created_at text not null,
           updated_at text not null,
           primary key (user_key, label)
@@ -294,6 +324,11 @@ export class PointerStore {
           primary key (user_key, pref_key)
         );
       `);
+
+      const threadColumns = this.schemaColumns("threads");
+      if (!threadColumns.includes("last_branch_suggested_at")) {
+        this.db.exec(`alter table threads add column last_branch_suggested_at text`);
+      }
 
       this.db
         .query(`insert into schema_migrations (version, applied_at) values (?, ?)`)
@@ -347,6 +382,7 @@ function threadFromRow(row: ThreadRow): ThreadRecord {
     isActive: row.is_active === 1,
     lastRoutedAt: row.last_routed_at ?? undefined,
     suppressBranchUntil: row.suppress_branch_until ?? undefined,
+    lastBranchSuggestedAt: row.last_branch_suggested_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

@@ -26,6 +26,16 @@ export interface InboundMessage {
   channelThreadKey?: string;
 }
 
+export type BranchSuggestionDecisionKind = "new_thread" | "continue";
+
+export interface BranchSuggestionResponse {
+  suggestionId: string;
+  userKey: UserKey;
+  decision: BranchSuggestionDecisionKind;
+  receivedAt: TimestampIso;
+  channelThreadKey?: string;
+}
+
 export type OutboundEvent =
   | {
       kind: "text";
@@ -55,6 +65,16 @@ export type OutboundEvent =
       approvalId: string;
       text: string;
       channelThreadKey?: string;
+    }
+  | {
+      kind: "branch_suggestion";
+      channel: ChannelName;
+      userKey: UserKey;
+      suggestionId: string;
+      text: string;
+      expiresAt: TimestampIso;
+      options: readonly BranchSuggestionDecisionKind[];
+      channelThreadKey?: string;
     };
 
 export interface ChannelSink {
@@ -70,6 +90,7 @@ export interface ThreadRecord {
   isActive: boolean;
   lastRoutedAt?: TimestampIso;
   suppressBranchUntil?: TimestampIso;
+  lastBranchSuggestedAt?: TimestampIso;
   createdAt: TimestampIso;
   updatedAt: TimestampIso;
 }

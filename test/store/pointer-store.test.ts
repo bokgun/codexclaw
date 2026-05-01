@@ -132,6 +132,27 @@ describe("PointerStore", () => {
     expect(store.getPendingApproval("channel-msg-b")).toBeDefined();
   });
 
+  test("stores branch suggestion lifecycle metadata without message bodies", () => {
+    const store = newStore();
+
+    store.upsertThread({
+      userKey: "user:branch",
+      label: "default",
+      threadId: "thread-branch",
+      makeActive: true,
+      lastRoutedAt: "2026-05-01T00:00:00.000Z"
+    });
+    store.markBranchSuggested("user:branch", "default", "2026-05-01T05:00:00.000Z");
+    store.setSuppressBranchUntil("user:branch", "default", "2026-05-08T05:00:00.000Z");
+
+    expect(store.getActiveThread("user:branch")).toMatchObject({
+      lastBranchSuggestedAt: "2026-05-01T05:00:00.000Z",
+      suppressBranchUntil: "2026-05-08T05:00:00.000Z"
+    });
+    expect(store.getLastBranchSuggestedAt("user:branch")).toBe("2026-05-01T05:00:00.000Z");
+    expect(store.schemaColumns("threads")).toContain("last_branch_suggested_at");
+  });
+
   test("does not expose persistence columns for conversation content or approval history", () => {
     const store = newStore();
     const forbidden = [

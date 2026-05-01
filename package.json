@@ -15,6 +15,7 @@
     "schema:generate": "codex app-server generate-ts --out schemas/generated",
     "schema:verify": "bash scripts/verify-schema-gate.sh",
     "cli": "bun src/runtime/cli.ts",
+    "telegram": "bun src/runtime/telegram.ts",
     "spike:repl": "bun src/spike/cli-repl.ts",
     "spike:turn": "bun src/spike/turn-probe.ts",
     "spike:diff-tool": "bun src/spike/diff-tool-probe.ts",

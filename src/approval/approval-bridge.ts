@@ -8,6 +8,11 @@ import type { Router } from "../runtime/router.js";
 import type { RuntimeEvent, ThreadRecord } from "../runtime/types.js";
 import type { PointerStore } from "../store/pointer-store.js";
 
+interface ThreadChannelTarget {
+  userKey: string;
+  channelThreadKey?: string;
+}
+
 interface PendingRuntimeApproval {
   approvalId: string;
   requestId: number | string;
@@ -22,21 +27,41 @@ interface PendingRuntimeApproval {
   prompt: string;
 }
 
+interface ModifyWait {
+  approvalId: string;
+  thread: ThreadRecord;
+  context: string;
+  userKey: string;
+  channelMessageId?: string;
+  channelThreadKey?: string;
+  expiresAt: string;
+}
+
+export interface ApprovalBridgeOptions {
+  modifyTtlMs?: number;
+  getThreadTarget?: (threadId: string) => ThreadChannelTarget | undefined;
+}
+
 export class ApprovalBridge {
   private readonly pending = new Map<string, PendingRuntimeApproval>();
   private readonly activeByThread = new Map<string, string>();
   private readonly queuedByThread = new Map<string, PendingRuntimeApproval[]>();
   private readonly tombstones = new Map<string, { userKey: string; reason: string }>();
+  private readonly modifyWaits = new Map<string, ModifyWait>();
+  private readonly modifyTtlMs: number;
 
   constructor(
     private readonly store: PointerStore,
     private readonly codex: CodexRuntimeClient,
     private readonly channel: ChannelAdapter,
     private readonly router: Router,
-  private readonly logger: RuntimeLogger,
+    private readonly logger: RuntimeLogger,
     private readonly ttlMs = 5 * 60 * 1000,
-    private readonly now = () => new Date()
-  ) {}
+    private readonly now = () => new Date(),
+    private readonly options: ApprovalBridgeOptions = {}
+  ) {
+    this.modifyTtlMs = options.modifyTtlMs ?? 10 * 60 * 1000;
+  }
 
   async handleRuntimeEvent(event: RuntimeEvent): Promise<boolean> {
     if (event.kind !== "approval_requested") return false;
@@ -59,6 +84,7 @@ export class ApprovalBridge {
 
     const approvalId = `approval:${randomUUID()}`;
     const prompt = summarizeApprovalPrompt(event.method, params);
+    const target = this.options.getThreadTarget?.(thread.threadId);
     const pending: PendingRuntimeApproval = {
       approvalId,
       requestId: event.requestId,
@@ -67,7 +93,7 @@ export class ApprovalBridge {
       turnId,
       context: prompt,
       userKey: thread.userKey,
-      channelThreadKey: undefined,
+      channelThreadKey: target?.channelThreadKey,
       prompt
     };
     this.pending.set(approvalId, pending);
@@ -85,6 +111,11 @@ export class ApprovalBridge {
   }
 
   async handleChannelResponse(response: ChannelApprovalResponse): Promise<void> {
+    if (response.decision === "modify" && response.modifyText) {
+      const completed = await this.completeModifyWait(response.approvalId, response.modifyText, response);
+      if (completed) return;
+    }
+
     const pending = this.pending.get(response.approvalId);
     if (!pending) {
       const tombstone = this.tombstones.get(response.approvalId);
@@ -121,17 +152,38 @@ export class ApprovalBridge {
       return;
     }
 
+    if (response.decision === "modify" && !response.modifyText) {
+      this.resolvePending(pending, false, "approval_modify_waiting");
+      this.modifyWaits.set(pending.approvalId, {
+        approvalId: pending.approvalId,
+        thread: pending.thread,
+        context: pending.context,
+        userKey: pending.userKey,
+        channelMessageId: pending.channelMessageId,
+        channelThreadKey: pending.channelThreadKey,
+        expiresAt: new Date(this.now().getTime() + this.modifyTtlMs).toISOString()
+      });
+      await this.promoteNext(pending.thread.threadId);
+      return;
+    }
+
     const routed = routeApprovalDecision(response);
     this.resolvePending(pending, routed.codexDecision === "accept", "approval_resolved");
 
     if (routed.followUpText) {
-      await this.router.enqueueFollowUp(
-        pending.thread,
-        `The previous approval was rejected so this modified instruction can be applied instead.\n\nOriginal request summary:\n${pending.context}\n\nModified instruction:\n${routed.followUpText}`
-      );
+      await this.router.enqueueFollowUp(pending.thread, buildModifyFollowUp(pending.context, routed.followUpText));
     }
 
     await this.promoteNext(pending.thread.threadId);
+  }
+
+  async handleModifyReply(input: {
+    approvalId: string;
+    userKey: string;
+    modifyText: string;
+    channelThreadKey?: string;
+  }): Promise<boolean> {
+    return this.completeModifyWait(input.approvalId, input.modifyText, input);
   }
 
   expirePending(now = this.now().toISOString()): void {
@@ -142,13 +194,21 @@ export class ApprovalBridge {
       this.notifyApprovalStatus(pending, "expired and was rejected");
       void this.promoteNext(pending.thread.threadId);
     }
+    for (const [approvalId, wait] of this.modifyWaits) {
+      if (wait.expiresAt > now) continue;
+      this.modifyWaits.delete(approvalId);
+      this.tombstones.set(approvalId, { userKey: wait.userKey, reason: "modify_expired" });
+      this.notifyModifyStatus(wait, "Modify expired. The original approval was already rejected.");
+    }
   }
 
   invalidateAll(reason: string): void {
     const approvals = [...this.pending.values()];
+    const modifyWaits = [...this.modifyWaits.values()];
     this.pending.clear();
     this.activeByThread.clear();
     this.queuedByThread.clear();
+    this.modifyWaits.clear();
 
     for (const pending of approvals) {
       this.tryDecline(pending, reason);
@@ -171,6 +231,16 @@ export class ApprovalBridge {
         reason
       });
     }
+
+    for (const wait of modifyWaits) {
+      this.tombstones.set(wait.approvalId, { userKey: wait.userKey, reason });
+      this.notifyModifyStatus(wait, `Modify ${wait.approvalId} was invalidated: ${reason}.`, "invalidated");
+      this.logger.warn("approval_modify_invalidated", {
+        approvalId: wait.approvalId,
+        threadId: wait.thread.threadId,
+        reason
+      });
+    }
   }
 
   private async promptPending(pending: PendingRuntimeApproval): Promise<void> {
@@ -181,7 +251,8 @@ export class ApprovalBridge {
       threadId: pending.thread.threadId,
       prompt: pending.prompt,
       options: ["approve", "reject", "modify"],
-      expiresAt
+      expiresAt,
+      channelThreadKey: pending.channelThreadKey
     });
 
     const channelMessageId = promptResult.channelMessageId ?? pending.approvalId;
@@ -259,6 +330,42 @@ export class ApprovalBridge {
     });
   }
 
+  private async completeModifyWait(
+    approvalId: string,
+    modifyText: string,
+    response: { userKey: string; channelThreadKey?: string }
+  ): Promise<boolean> {
+    const wait = this.modifyWaits.get(approvalId);
+    if (!wait) return false;
+    if (response.userKey !== wait.userKey || (wait.channelThreadKey && response.channelThreadKey !== wait.channelThreadKey)) {
+      this.logger.warn("approval_modify_rejected", { approvalId, reason: "correlation_mismatch" });
+      return true;
+    }
+    if (this.now().toISOString() > wait.expiresAt) {
+      this.modifyWaits.delete(approvalId);
+      this.tombstones.set(approvalId, { userKey: wait.userKey, reason: "modify_expired" });
+      this.notifyModifyStatus(wait, "Modify expired. The original approval was already rejected.");
+      return true;
+    }
+
+    this.modifyWaits.delete(approvalId);
+    this.tombstones.set(approvalId, { userKey: wait.userKey, reason: "approval_modified" });
+    await this.router.enqueueFollowUp(wait.thread, buildModifyFollowUp(wait.context, modifyText));
+    return true;
+  }
+
+  private notifyModifyStatus(wait: ModifyWait, text: string, status = "modify_expired"): void {
+    if (!wait.channelMessageId) return;
+    void this.channel.send({
+      channel: this.channel.name,
+      userKey: wait.userKey,
+      text,
+      channelThreadKey: wait.channelThreadKey,
+      replyToMessageId: wait.channelMessageId,
+      attachments: [{ kind: "status", status }]
+    });
+  }
+
   private async promoteNext(threadId: string): Promise<void> {
     const queue = this.queuedByThread.get(threadId);
     const next = queue?.shift();
@@ -307,4 +414,8 @@ function asObject(value: JsonValue): JsonObject {
 function readString(object: JsonObject, key: string): string | undefined {
   const value = object[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function buildModifyFollowUp(context: string, modifyText: string): string {
+  return `The previous approval was rejected so this modified instruction can be applied instead.\n\nOriginal request summary:\n${context}\n\nModified instruction:\n${modifyText}`;
 }

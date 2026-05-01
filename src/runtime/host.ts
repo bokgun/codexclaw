@@ -7,25 +7,35 @@ import { CodexWsClient } from "../codex/ws-client.js";
 import { getCodexConnectionConfig } from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { ThreadManager } from "../thread/thread-manager.js";
+import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
 import { EventDispatcher } from "./events.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
 import { Router } from "./router.js";
-import type { ChannelSink, InboundMessage, OutboundEvent } from "./types.js";
+import type { BranchSuggestionResponse, ChannelName, ChannelSink, InboundMessage, OutboundEvent, UserKey } from "./types.js";
 
 export interface HostRuntimeOptions {
   channel?: ChannelAdapter;
   store?: PointerStore;
   logger?: RuntimeLogger;
   dbPath?: string;
+  branchSuggestions?: BranchSuggestionOptions | false;
+  approvalModifyTtlMs?: number;
 }
+
+type BranchSuggestionChannel = ChannelAdapter & {
+  readonly branchSuggestionResponses?: AsyncIterable<BranchSuggestionResponse>;
+};
 
 export class HostRuntime {
   private readonly channel: ChannelAdapter;
   private readonly store: PointerStore;
   private readonly logger: RuntimeLogger;
+  private readonly branchSuggestionOptions: BranchSuggestionOptions | false;
+  private readonly approvalModifyTtlMs: number | undefined;
   private codex!: CodexRuntimeClient;
   private router!: Router;
   private approvals!: ApprovalBridge;
+  private branchSuggestions?: BranchSuggestionCoordinator;
   private approvalExpiry?: ReturnType<typeof setInterval>;
   private reconnecting = false;
   private stopping = false;
@@ -36,6 +46,8 @@ export class HostRuntime {
     this.channel = options.channel ?? createCliChannelAdapter({ input: process.stdin, logger: this.logger });
     if (!options.store) mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.store = options.store ?? createPointerStore(dbPath);
+    this.branchSuggestionOptions = options.branchSuggestions ?? false;
+    this.approvalModifyTtlMs = options.approvalModifyTtlMs;
   }
 
   async start(): Promise<void> {
@@ -44,24 +56,37 @@ export class HostRuntime {
     await this.resumeKnownActiveThreads();
     this.approvalExpiry = setInterval(() => this.approvals.expirePending(), 5_000);
 
-    await Promise.all([this.pumpMessages(), this.pumpApprovals()]);
+    const pumps = [this.pumpMessages(), this.pumpApprovals()];
+    const branchResponses = (this.channel as BranchSuggestionChannel).branchSuggestionResponses;
+    if (this.branchSuggestions && branchResponses) pumps.push(this.pumpBranchSuggestions(branchResponses));
+    await Promise.all(pumps);
   }
 
   private installCodexClient(transport: CodexWsClient): void {
     this.codex = new CodexRuntimeClient(transport);
     const sink = new ChannelAdapterSink(this.channel);
     const dispatcher = new EventDispatcher(sink, this.logger);
+    const threadTargets = new Map<string, { userKey: UserKey; channel: ChannelName; channelThreadKey?: string }>();
     const threads = new ThreadManager(this.store, this.codex);
     this.router = new Router(threads, this.codex, sink, {
       bindThread: (thread, message) => {
-        dispatcher.bindThread(thread.threadId, {
+        const target = {
           userKey: message.userKey,
           channel: message.channel,
           channelThreadKey: message.channelThreadKey
-        });
+        };
+        threadTargets.set(thread.threadId, target);
+        dispatcher.bindThread(thread.threadId, target);
       }
     });
-    this.approvals = new ApprovalBridge(this.store, this.codex, this.channel, this.router, this.logger);
+    this.approvals = new ApprovalBridge(this.store, this.codex, this.channel, this.router, this.logger, undefined, undefined, {
+      getThreadTarget: (threadId) => threadTargets.get(threadId),
+      modifyTtlMs: this.approvalModifyTtlMs
+    });
+    this.branchSuggestions =
+      this.branchSuggestionOptions === false
+        ? undefined
+        : new BranchSuggestionCoordinator(this.store, sink, this.branchSuggestionOptions);
 
     this.codex.onEvent((event) => {
       this.router.handleRuntimeEvent(event);
@@ -89,11 +114,13 @@ export class HostRuntime {
   private async pumpMessages(): Promise<void> {
     try {
       for await (const message of this.channel.receive) {
-        if (message.text.trim() === "/quit" || message.text.trim() === "/exit") {
+        if (message.channel === "cli" && (message.text.trim() === "/quit" || message.text.trim() === "/exit")) {
           this.close();
           break;
         }
-        await this.router.receive(toInboundMessage(message));
+        const inbound = toInboundMessage(message);
+        const held = this.branchSuggestions ? await this.branchSuggestions.maybeHold(inbound) : false;
+        if (!held) await this.router.receive(inbound);
       }
     } finally {
       void this.channel.close?.();
@@ -103,6 +130,12 @@ export class HostRuntime {
   private async pumpApprovals(): Promise<void> {
     for await (const response of this.channel.approvalResponses) {
       await this.approvals.handleChannelResponse(response);
+    }
+  }
+
+  private async pumpBranchSuggestions(responses: AsyncIterable<BranchSuggestionResponse>): Promise<void> {
+    for await (const response of responses) {
+      await this.branchSuggestions?.handleResponse(response, (message) => this.router.receive(message));
     }
   }
 
@@ -205,6 +238,26 @@ class ChannelAdapterSink implements ChannelSink {
         prompt: event.text,
         options: ["approve", "reject", "modify"],
         expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        channelThreadKey: event.channelThreadKey
+      });
+    }
+
+    if (event.kind === "branch_suggestion") {
+      if (this.channel.requestBranchSuggestion) {
+        return this.channel.requestBranchSuggestion({
+          suggestionId: event.suggestionId,
+          userKey: event.userKey,
+          channelThreadKey: event.channelThreadKey ?? event.userKey,
+          text: event.text,
+          expiresAt: event.expiresAt,
+          options: event.options
+        });
+      }
+      return this.channel.send({
+        kind: "text",
+        channel: event.channel,
+        userKey: event.userKey,
+        text: event.text,
         channelThreadKey: event.channelThreadKey
       });
     }

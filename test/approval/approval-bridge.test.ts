@@ -55,6 +55,84 @@ describe("ApprovalBridge", () => {
     store.close();
   });
 
+  test("binds approval prompts to the last channel thread target", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, undefined, {
+      getThreadTarget: () => ({ userKey: "user:1", channelThreadKey: "telegram:chat-a" })
+    });
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    expect(channel.requests[0]!.channelThreadKey).toBe("telegram:chat-a");
+
+    await bridge.handleChannelResponse(
+      response(approvalId, "approve", undefined, `prompt:${approvalId}`, "telegram:chat-b")
+    );
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval(`prompt:${approvalId}`)).toBeDefined();
+    store.close();
+  });
+
+  test("modify reply can arrive after original approval ttl but before modify ttl", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, 5 * 60 * 1000, () => now, {
+      modifyTtlMs: 10 * 60 * 1000,
+      getThreadTarget: () => ({ userKey: "user:1", channelThreadKey: "telegram:chat-a" })
+    });
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    now = new Date("2026-05-01T00:01:00.000Z");
+    await bridge.handleChannelResponse(response(approvalId, "modify", undefined, `prompt:${approvalId}`, "telegram:chat-a"));
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+
+    now = new Date("2026-05-01T00:06:00.000Z");
+    await bridge.handleModifyReply({
+      approvalId,
+      userKey: "user:1",
+      channelThreadKey: "telegram:chat-a",
+      modifyText: "use a safer command"
+    });
+
+    expect(router.followUps).toHaveLength(1);
+    expect(router.followUps[0]?.text).toContain("use a safer command");
+    store.close();
+  });
+
+  test("approval expiry racing modify selection resolves once without follow-up", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, 1000, () => now);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    now = new Date("2026-05-01T00:00:02.000Z");
+    bridge.expirePending(now.toISOString());
+    await bridge.handleChannelResponse(response(approvalId, "modify", undefined, `prompt:${approvalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(router.followUps).toEqual([]);
+    store.close();
+  });
+
   test("prompts only one active approval per thread and promotes the next", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
@@ -132,6 +210,34 @@ describe("ApprovalBridge", () => {
     expect(codex.responses).toHaveLength(2);
     store.close();
   });
+
+  test("notifies pending modify waits when invalidated on disconnect", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(approvalId, "modify", undefined, `prompt:${approvalId}`));
+
+    bridge.invalidateAll("disconnect");
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(channel.messages.at(-1)?.text).toContain("invalidated: disconnect");
+    expect(channel.messages.at(-1)?.attachments).toEqual([{ kind: "status", status: "invalidated" }]);
+    await bridge.handleModifyReply({
+      approvalId,
+      userKey: "user:1",
+      modifyText: "late modification"
+    });
+    expect(router.followUps).toEqual([]);
+    store.close();
+  });
 });
 
 class MockApprovalCodex {
@@ -179,7 +285,8 @@ function response(
   approvalId: string,
   decision: ChannelApprovalResponse["decision"],
   modifyText?: string,
-  channelMessageId = approvalId
+  channelMessageId = approvalId,
+  channelThreadKey?: string
 ): ChannelApprovalResponse {
   return {
     approvalId,
@@ -187,7 +294,8 @@ function response(
     userKey: "user:1",
     decision,
     modifyText,
-    receivedAt: "2026-05-01T00:00:00.000Z"
+    receivedAt: "2026-05-01T00:00:00.000Z",
+    channelThreadKey
   };
 }
 

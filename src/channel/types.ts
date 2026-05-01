@@ -83,6 +83,25 @@ export interface ChannelApprovalResponse {
   channelThreadKey?: string;
 }
 
+export type BranchSuggestionDecision = "new_thread" | "continue";
+
+export interface ChannelBranchSuggestionRequest {
+  suggestionId: string;
+  userKey: UserKey;
+  channelThreadKey: string;
+  text: string;
+  expiresAt: TimestampIso;
+  options: readonly BranchSuggestionDecision[];
+}
+
+export interface ChannelBranchSuggestionResponse {
+  suggestionId: string;
+  userKey: UserKey;
+  channelThreadKey?: string;
+  decision: BranchSuggestionDecision;
+  receivedAt: TimestampIso;
+}
+
 export interface ChannelAcknowledgeRequest {
   channel: ChannelKind;
   userKey: UserKey;
@@ -95,8 +114,10 @@ export interface ChannelAdapter {
   readonly name: ChannelKind;
   readonly receive: AsyncIterable<NormalizedMessage>;
   readonly approvalResponses: AsyncIterable<ChannelApprovalResponse>;
+  readonly branchSuggestionResponses?: AsyncIterable<ChannelBranchSuggestionResponse>;
   send(message: OutboundMessage): Promise<ChannelSendResult>;
   requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalPrompt>;
+  requestBranchSuggestion?(request: ChannelBranchSuggestionRequest): Promise<ChannelSendResult>;
   acknowledge?(request: ChannelAcknowledgeRequest): Promise<void>;
   close?(): Promise<void> | void;
 }
