@@ -19,6 +19,13 @@ if [[ ! -f "$TOKEN_FILE" ]]; then
   echo "Created token file: $TOKEN_FILE" >&2
 fi
 
+if [[ -L "$TOKEN_FILE" ]]; then
+  echo "Refusing symlink token file: $TOKEN_FILE" >&2
+  exit 1
+fi
+
+chmod go-rwx "$TOKEN_FILE"
+
 TOKEN_FILE="$(cd "$(dirname "$TOKEN_FILE")" && pwd)/$(basename "$TOKEN_FILE")"
 
 exec codex app-server \

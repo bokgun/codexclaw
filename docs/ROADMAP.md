@@ -7,7 +7,8 @@ This roadmap translates the PRD milestones into execution phases. It keeps the P
 
 ## Current Status
 
-M0 runtime and schema gates are in place:
+M0 runtime and schema gates are in place, and the first M1 core runtime slice is
+implemented:
 
 - Bun + TypeScript project initialized.
 - Local `codex app-server` startup helper exists.
@@ -20,6 +21,10 @@ M0 runtime and schema gates are in place:
 
 M0 findings now record observed behavior for initialize, thread, turn
 streaming, approval, cancel, reconnect, and active schema provenance.
+
+M1 now has a SQLite pointer store, normalized channel contracts, CLI adapter,
+thread manager, router queue, approval bridge, structured stderr logging, and
+focused Bun tests.
 
 ## Release Gates
 
@@ -62,7 +67,7 @@ Exit criteria:
 
 Goal: build the reusable host layer above the verified app-server protocol.
 
-Planned scope:
+Implemented core slice:
 
 - Router and inbox normalization.
 - Pointer Store backed by SQLite.
@@ -71,20 +76,28 @@ Planned scope:
   - `/new [label]`
   - `/threads`
   - `/switch <label>`
-  - `/branch [label]`
-  - `/archive <label>`
+  - `/branch [label]` returns an explicit capability error until
+    `thread/fork` is verified for the pinned app-server.
+  - `/archive <label>` returns an explicit capability error until
+    `thread/archive` is verified for the pinned app-server.
 - Three-way Approval Bridge:
   - Approve
   - Reject
   - Modify as reject plus follow-up turn
-- Approval safety rules:
-  - approval timeout auto-reject
-  - separate Modify input timeout
-  - one active approval per thread, with additional approvals queued
-- Reconnect handling with thread state recovery.
+- Reconnect handling that blocks routing while disconnected, quarantines
+  ambiguous in-flight threads, and resumes known active threads with
+  `thread/read` plus `thread/resume`.
 - Turn concurrency guard for one active turn per thread.
+- One-active-approval queueing, approval expiry auto-reject, and Modify as a
+  rejected original approval plus follow-up turn.
 - Structured stderr logging.
-- Mock app-server tests for router, pointer store, approval, and reconnect paths.
+- Focused tests for router, pointer store, channel contracts, approval, and
+  logging paths.
+
+M1 validation includes focused mock tests plus a live local `bun run cli`
+`/quit` smoke against `codex app-server`. Adapter-specific interactive Modify
+text-entry timeouts remain part of Telegram/Discord adapter work, where the
+platform modal/reply flow exists.
 
 Non-goals:
 

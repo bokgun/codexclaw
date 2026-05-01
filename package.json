@@ -10,9 +10,11 @@
     "bun": ">=1.1.0"
   },
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "schema:generate": "codex app-server generate-ts --out schemas/generated",
     "schema:verify": "bash scripts/verify-schema-gate.sh",
+    "cli": "bun src/runtime/cli.ts",
     "spike:repl": "bun src/spike/cli-repl.ts",
     "spike:turn": "bun src/spike/turn-probe.ts",
     "spike:diff-tool": "bun src/spike/diff-tool-probe.ts",

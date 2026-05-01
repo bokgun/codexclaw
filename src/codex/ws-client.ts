@@ -61,6 +61,7 @@ export class CodexWsClient {
   private readonly inboundHandlers = new Set<(message: RpcInbound) => void>();
   private readonly notificationHandlers = new Set<(event: RpcNotification) => void>();
   private readonly serverRequestHandlers = new Set<(request: RpcServerRequest) => void>();
+  private readonly closeHandlers = new Set<(error?: Error) => void>();
 
   constructor(private readonly options: CodexClientOptions) {}
 
@@ -87,7 +88,7 @@ export class CodexWsClient {
       };
       const onError = (error: Error) => {
         cleanup();
-        reject(new Error(`Unable to connect to Codex app-server at ${this.options.url}: ${error.message}`));
+        reject(new Error(`Unable to connect to Codex app-server: ${error.message}`));
       };
 
       socket.once("open", onOpen);
@@ -95,8 +96,8 @@ export class CodexWsClient {
     });
 
     this.socket.on("message", (data) => this.handleMessage(data.toString()));
-    this.socket.on("close", () => this.rejectAll(new Error("Codex WebSocket closed")));
-    this.socket.on("error", (error) => this.rejectAll(error));
+    this.socket.on("close", () => this.handleClose(new Error("Codex WebSocket closed")));
+    this.socket.on("error", (error) => this.handleClose(error));
 
     await this.request("initialize", {
       clientInfo: {
@@ -121,6 +122,11 @@ export class CodexWsClient {
   onServerRequest(handler: (request: RpcServerRequest) => void): () => void {
     this.serverRequestHandlers.add(handler);
     return () => this.serverRequestHandlers.delete(handler);
+  }
+
+  onClose(handler: (error?: Error) => void): () => void {
+    this.closeHandlers.add(handler);
+    return () => this.closeHandlers.delete(handler);
   }
 
   request(method: string, params?: JsonValue): Promise<JsonValue> {
@@ -207,6 +213,11 @@ export class CodexWsClient {
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+  }
+
+  private handleClose(error: Error): void {
+    this.rejectAll(error);
+    for (const handler of this.closeHandlers) handler(error);
   }
 }
 
