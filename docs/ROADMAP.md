@@ -95,7 +95,8 @@ Implemented core slice:
   logging paths.
 
 M1 validation includes focused mock tests plus a live local `bun run cli`
-`/quit` smoke against `codex app-server`. Adapter-specific interactive Modify
+`/quit` smoke against `codex app-server`. Manual interactive validation is
+tracked in `docs/M1-manual-checklist.md`. Adapter-specific interactive Modify
 text-entry timeouts remain part of Telegram/Discord adapter work, where the
 platform modal/reply flow exists.
 

@@ -32,10 +32,10 @@ export class HostRuntime {
 
   constructor(options: HostRuntimeOptions = {}) {
     const dbPath = options.dbPath ?? ".codexclaw/codexclaw.sqlite";
-    this.channel = options.channel ?? createCliChannelAdapter({ input: process.stdin });
+    this.logger = options.logger ?? createJsonLineLogger({ minLevel: "warn" });
+    this.channel = options.channel ?? createCliChannelAdapter({ input: process.stdin, logger: this.logger });
     if (!options.store) mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     this.store = options.store ?? createPointerStore(dbPath);
-    this.logger = options.logger ?? createJsonLineLogger();
   }
 
   async start(): Promise<void> {
@@ -210,6 +210,7 @@ class ChannelAdapterSink implements ChannelSink {
     }
 
     return this.channel.send({
+      kind: event.kind,
       channel: event.channel,
       userKey: event.userKey,
       text: event.kind === "agent_delta" ? event.delta : event.text,

@@ -43,13 +43,18 @@ export class CliChannelAdapter implements ChannelAdapter {
   private readonly pendingApprovals = new Map<string, ChannelApprovalRequest>();
   private readonly messageQueue = new AsyncQueue<NormalizedMessage>();
   private readonly approvalQueue = new AsyncQueue<ChannelApprovalResponse>();
+  private readonly promptWaiters: Array<() => void> = [];
+  private turnActive = false;
+  private wroteDelta = false;
+  private waitingForInput = false;
+  private interruptedInput = false;
 
   constructor(options: CliAdapterOptions = {}) {
     this.userKey = options.userKey ?? defaultCliUserKey();
     this.channelThreadKey = options.channelThreadKey ?? "cli:local";
     this.output = options.output ?? stdout;
     this.prompt = options.prompt ?? "codexclaw> ";
-    this.logger = options.logger ?? createJsonLineLogger();
+    this.logger = options.logger ?? createJsonLineLogger({ minLevel: "warn" });
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? (() => randomUUID());
 
@@ -78,23 +83,47 @@ export class CliChannelAdapter implements ChannelAdapter {
   }
 
   async send(message: OutboundMessage): Promise<ChannelSendResult> {
-    this.output.write(`${message.text}\n`);
+    if (message.kind === "agent_delta") {
+      this.prepareAsyncOutput();
+      this.output.write(message.text);
+      this.wroteDelta = true;
+      return { channelMessageId: this.idFactory() };
+    }
+
+    const text = message.text;
+    const terminal = text === "Turn completed." || text === "Turn failed.";
+    this.prepareAsyncOutput();
+    if (this.wroteDelta) this.output.write("\n");
+    this.output.write(`${text}\n`);
+    this.wroteDelta = false;
+
+    if (text === "Turn started.") {
+      this.turnActive = true;
+    } else if (terminal) {
+      this.turnActive = false;
+      this.releasePromptWaiters();
+    } else if (!this.turnActive) {
+      this.releasePromptWaiters();
+    }
+
     return { channelMessageId: this.idFactory() };
   }
 
   async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalPrompt> {
     const channelMessageId = request.approvalId;
     this.pendingApprovals.set(request.approvalId, request);
+    this.prepareAsyncOutput();
     this.output.write(
       [
         "",
         `Approval requested (${request.approvalId})`,
         request.prompt,
-        "Choose: approve, reject, or modify.",
-        `Respond with: /approve ${request.approvalId}, /reject ${request.approvalId}, or /modify ${request.approvalId} <instruction>`,
+        "Choose: 1 approve, 2 reject, 3 <instruction> modify.",
+        `Slash form also works: /approve ${request.approvalId}, /reject ${request.approvalId}, or /modify ${request.approvalId} <instruction>`,
         ""
       ].join("\n")
     );
+    this.releasePromptWaiters();
     this.logger.info("approval_prompt_sent", {
       channel: this.name,
       userKey: request.userKey,
@@ -112,6 +141,7 @@ export class CliChannelAdapter implements ChannelAdapter {
 
   close(): void {
     this.repl?.close();
+    this.releasePromptWaiters();
     this.messageQueue.close();
     this.approvalQueue.close();
   }
@@ -121,12 +151,13 @@ export class CliChannelAdapter implements ChannelAdapter {
 
     try {
       for (;;) {
-        const line = await readLine(this.repl, this.prompt);
+        const line = await this.readUserLine();
         if (line === undefined) return;
 
         const approval = this.parseApprovalLine(line);
         if (approval) {
           this.approvalQueue.push(approval);
+          if (this.turnActive) await this.waitForPromptRelease();
           continue;
         }
 
@@ -143,12 +174,15 @@ export class CliChannelAdapter implements ChannelAdapter {
         }
         if (parsed.kind === "command") {
           this.messageQueue.push(this.normalizeMessage(line));
+          if (!isExitCommand(line)) await this.waitForPromptRelease();
           continue;
         }
 
         this.messageQueue.push(parsed.message);
+        await this.waitForPromptRelease();
       }
     } finally {
+      this.releasePromptWaiters();
       this.messageQueue.close();
       this.approvalQueue.close();
     }
@@ -156,16 +190,24 @@ export class CliChannelAdapter implements ChannelAdapter {
 
   private parseApprovalLine(line: string): ChannelApprovalResponse | undefined {
     const trimmed = line.trim();
-    const match = /^\/(approve|reject|modify)\s+(\S+)(?:\s+([\s\S]+))?$/.exec(trimmed);
+    const match = /^(?:\/)?(approve|reject|modify|a|y|yes|r|n|no|m|1|2|3)(?:\s+([\s\S]+))?$/.exec(trimmed);
     if (!match) return undefined;
 
     const rawDecision = match[1];
-    const approvalId = match[2];
-    const modifyText = match[3];
+    const remainder = match[2]?.trim();
+    const decision = readApprovalDecision(rawDecision);
+    if (!decision) return undefined;
+
+    const parsed = this.readApprovalTarget(decision, remainder);
+    if (!parsed) {
+      this.output.write("usage: 1, 2, 3 <instruction>, or /approve <approval-id>\n");
+      return undefined;
+    }
+
+    const { approvalId, modifyText } = parsed;
     if (!approvalId) return undefined;
 
     const request = this.pendingApprovals.get(approvalId);
-    const decision = readApprovalDecision(rawDecision);
     if (!request || !decision) {
       this.logger.warn("approval_response_unmatched", {
         channel: this.name,
@@ -202,6 +244,64 @@ export class CliChannelAdapter implements ChannelAdapter {
       channelThreadKey: this.channelThreadKey
     };
   }
+
+  private waitForPromptRelease(): Promise<void> {
+    return new Promise((resolve) => {
+      this.promptWaiters.push(resolve);
+    });
+  }
+
+  private releasePromptWaiters(): void {
+    for (const waiter of this.promptWaiters.splice(0)) waiter();
+  }
+
+  private async readUserLine(): Promise<string | undefined> {
+    if (!this.repl) return undefined;
+    this.waitingForInput = true;
+    this.interruptedInput = false;
+    try {
+      return await readLine(this.repl, this.prompt);
+    } finally {
+      this.waitingForInput = false;
+    }
+  }
+
+  private prepareAsyncOutput(): void {
+    if (this.waitingForInput && !this.interruptedInput) {
+      this.output.write("\n");
+      this.interruptedInput = true;
+    }
+  }
+
+  private readApprovalTarget(
+    decision: ApprovalDecision,
+    remainder: string | undefined
+  ): { approvalId: string; modifyText?: string } | undefined {
+    if (!remainder) {
+      const approvalId = this.singlePendingApprovalId();
+      return approvalId ? { approvalId } : undefined;
+    }
+
+    const [first, ...rest] = remainder.split(/\s+/);
+    if (first && this.pendingApprovals.has(first)) {
+      return {
+        approvalId: first,
+        modifyText: rest.join(" ").trim() || undefined
+      };
+    }
+
+    const approvalId = this.singlePendingApprovalId();
+    if (!approvalId) return undefined;
+    return {
+      approvalId,
+      modifyText: decision === "modify" ? remainder : undefined
+    };
+  }
+
+  private singlePendingApprovalId(): string | undefined {
+    if (this.pendingApprovals.size !== 1) return undefined;
+    return this.pendingApprovals.keys().next().value;
+  }
 }
 
 export function createCliChannelAdapter(options: CliAdapterOptions = {}): CliChannelAdapter {
@@ -214,10 +314,15 @@ function defaultCliUserKey(): string {
 }
 
 function readApprovalDecision(value: string | undefined): ApprovalDecision | undefined {
-  if (value === "approve") return "approve";
-  if (value === "reject") return "reject";
-  if (value === "modify") return "modify";
+  if (value === "approve" || value === "a" || value === "y" || value === "yes" || value === "1") return "approve";
+  if (value === "reject" || value === "r" || value === "n" || value === "no" || value === "2") return "reject";
+  if (value === "modify" || value === "m" || value === "3") return "modify";
   return undefined;
+}
+
+function isExitCommand(line: string): boolean {
+  const text = line.trim();
+  return text === "/quit" || text === "/exit";
 }
 
 async function readLine(repl: Interface, prompt: string): Promise<string | undefined> {

@@ -28,6 +28,7 @@ export type ParsedChannelInput =
   | { kind: "message"; message: NormalizedMessage };
 
 export interface OutboundMessage {
+  kind?: "text" | "agent_delta" | "status";
   channel: ChannelKind;
   userKey: UserKey;
   text: string;
