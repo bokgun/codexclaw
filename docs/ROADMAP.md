@@ -7,17 +7,19 @@ This roadmap translates the PRD milestones into execution phases. It keeps the P
 
 ## Current Status
 
-M0 scaffold is in place:
+M0 runtime and schema gates are in place:
 
 - Bun + TypeScript project initialized.
 - Local `codex app-server` startup helper exists.
 - JSON-RPC WebSocket client spike exists.
 - CLI REPL spike exists.
 - Approval demo spike exists.
-- Generated app-server schemas are checked in.
+- Active app-server schemas are checked in, pinned, and verified by
+  `bun run schema:verify`.
 - Project subagents and planning/review workflows are configured.
 
-M0 is not complete until `docs/M0-findings.md` records real observed behavior for initialize, thread, turn streaming, approval, cancel, and reconnect.
+M0 findings now record observed behavior for initialize, thread, turn
+streaming, approval, cancel, reconnect, and active schema provenance.
 
 ## Release Gates
 
@@ -32,7 +34,7 @@ M0 is not complete until `docs/M0-findings.md` records real observed behavior fo
 
 Goal: prove that `codex app-server` can be treated as a reliable external agent runtime.
 
-Status: in progress.
+Status: complete.
 
 Deliverables:
 

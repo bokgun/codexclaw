@@ -1,11 +1,11 @@
 # M0 Findings
 
-Status: M0 runtime gate passed; Schema Gate blocked
+Status: M0 runtime gate passed; Schema Gate passed
 
 M0 runtime behavior was observed against a local `codex app-server` on
-2026-05-01. M1 runtime implementation is still blocked by the separate Schema
-Gate until the generated schemas are tied to a pinned Codex CLI/app-server
-version and regeneration provenance is recorded.
+2026-05-01. Schema Gate is satisfied for the active schema directory
+`schemas/generated`; `schemas/generated/v2` remains a legacy snapshot outside
+the active protocol source.
 
 ## Environment
 
@@ -293,16 +293,21 @@ tests.
 
 ## Schema Gate
 
-Blocked.
+Passed for the active schema source.
 
-Observed runtime and local CLI report Codex CLI/app-server version `0.128.0`,
-but the repository does not yet record a pinned Codex version in `package.json`,
-Dockerfile, or another schema provenance file. The current
-`schemas/generated/**` contents are checked in, but the exact generation command
-and source binary pin are not recorded.
+- Pinned Codex CLI/app-server version: `0.128.0`
+- Version pin location: `package.json` field `codexclaw.codexCliVersion`
+- Active schema directory: `schemas/generated`
+- Generation command: `codex app-server generate-ts --out schemas/generated`
+- Verification command: `bun run schema:verify`
+- Provenance: `docs/schema-provenance.md`
 
-M1 implementation must not proceed until Schema Gate is satisfied or explicitly
-waived by a follow-up plan/review.
+`bun run schema:verify` regenerated the active schema from the pinned local
+Codex CLI and matched `schemas/generated`, ignoring only the checked-in
+`.gitkeep` file.
+
+`schemas/generated/v2` does not match the `0.128.0` generator output and is not
+an active M1 protocol source until separate provenance is recorded.
 
 ## Checklist
 
@@ -318,8 +323,8 @@ waived by a follow-up plan/review.
 - M0 runtime gate passes for WebSocket, thread, turn streaming, command/file
   approval, cancel/interrupt, reconnect/resume, and minimal pointer-store
   assumptions.
-- Schema Gate remains blocked because generated schema provenance and Codex
-  version pinning are not recorded.
+- Schema Gate passes for `schemas/generated`; M1 must not use
+  `schemas/generated/v2` as a protocol source until it has separate provenance.
 - M1 cannot rely on client-side turn idempotency keys based on the current
   generated `TurnStartParams` schema.
 - M1 must avoid automatic prompt replay after ambiguous reconnects.

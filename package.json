@@ -11,6 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "schema:generate": "codex app-server generate-ts --out schemas/generated",
+    "schema:verify": "bash scripts/verify-schema-gate.sh",
     "spike:repl": "bun src/spike/cli-repl.ts",
     "spike:turn": "bun src/spike/turn-probe.ts",
     "spike:diff-tool": "bun src/spike/diff-tool-probe.ts",
@@ -27,5 +29,14 @@
     "@types/node": "^20.12.0",
     "@types/ws": "^8.5.10",
     "typescript": "^5.4.0"
+  },
+  "codexclaw": {
+    "codexCliVersion": "0.128.0",
+    "appServerSchema": {
+      "activeDirectory": "schemas/generated",
+      "generateCommand": "codex app-server generate-ts --out schemas/generated",
+      "experimental": false,
+      "provenance": "docs/schema-provenance.md"
+    }
   }
 }

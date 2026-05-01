@@ -86,7 +86,9 @@ Implementation dependencies:
 - M0 Gate must be satisfied before implementation begins:
   - `docs/M0-findings.md` must record actual method names, notification names, payload shapes, approval request/response mechanics, cancel behavior, and reconnect behavior.
   - Any M0 finding that contradicts PRD assumptions must be triaged before M1 code locks protocol abstractions.
-- Generated schemas under `schemas/generated/` and `schemas/generated/v2/` remain the protocol type source.
+- Generated schemas under `schemas/generated/` are the active protocol type
+  source. `schemas/generated/v2/` is a legacy snapshot and must not be used by
+  M1 until it has separate provenance and a matching pinned generator.
 - Bun remains the command runner and runtime.
 - SQLite should use Bun built-in SQLite support unless implementation discovers a blocker requiring a documented dependency.
 - Existing `src/codex/ws-client.ts` can be evolved, but must stay a generic app-server JSON-RPC client rather than gaining router/store responsibilities.

@@ -19,6 +19,12 @@ bun run start:codex
 bun run spike:repl
 ```
 
+Verify the pinned app-server schema before runtime work:
+
+```bash
+bun run schema:verify
+```
+
 Required environment:
 
 - `CODEXCLAW_CODEX_WS`: Codex app-server WebSocket URL.
