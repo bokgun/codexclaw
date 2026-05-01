@@ -24,6 +24,31 @@ export interface RpcNotification {
   params?: JsonValue;
 }
 
+export type RpcInbound =
+  | {
+      kind: "response";
+      id: number | string;
+      result?: JsonValue;
+      error?: JsonValue;
+    }
+  | {
+      kind: "notification";
+      method: string;
+      params?: JsonValue;
+    }
+  | {
+      kind: "server_request";
+      id: number | string;
+      method: string;
+      params?: JsonValue;
+    };
+
+export interface RpcServerRequest {
+  id: number | string;
+  method: string;
+  params?: JsonValue;
+}
+
 type PendingRequest = {
   resolve: (value: JsonValue) => void;
   reject: (error: Error) => void;
@@ -33,7 +58,9 @@ export class CodexWsClient {
   private socket?: WebSocket;
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly inboundHandlers = new Set<(message: RpcInbound) => void>();
   private readonly notificationHandlers = new Set<(event: RpcNotification) => void>();
+  private readonly serverRequestHandlers = new Set<(request: RpcServerRequest) => void>();
 
   constructor(private readonly options: CodexClientOptions) {}
 
@@ -86,6 +113,16 @@ export class CodexWsClient {
     return () => this.notificationHandlers.delete(handler);
   }
 
+  onInbound(handler: (message: RpcInbound) => void): () => void {
+    this.inboundHandlers.add(handler);
+    return () => this.inboundHandlers.delete(handler);
+  }
+
+  onServerRequest(handler: (request: RpcServerRequest) => void): () => void {
+    this.serverRequestHandlers.add(handler);
+    return () => this.serverRequestHandlers.delete(handler);
+  }
+
   request(method: string, params?: JsonValue): Promise<JsonValue> {
     const id = this.nextId++;
     const socket = this.requireOpenSocket();
@@ -104,31 +141,51 @@ export class CodexWsClient {
     socket.send(JSON.stringify(payload));
   }
 
+  respond(id: number | string, result?: JsonValue): void {
+    const socket = this.requireOpenSocket();
+    const payload = result === undefined ? { id, result: null } : { id, result };
+    socket.send(JSON.stringify(payload));
+  }
+
+  respondError(id: number | string, error: JsonValue): void {
+    const socket = this.requireOpenSocket();
+    socket.send(JSON.stringify({ id, error }));
+  }
+
   close(): void {
     this.socket?.close();
   }
 
   private handleMessage(raw: string): void {
     const message = JSON.parse(raw) as JsonObject;
-    const id = typeof message.id === "number" ? message.id : undefined;
+    const inbound = classifyInbound(message);
 
-    if (id !== undefined) {
-      const pending = this.pending.get(id);
+    for (const handler of this.inboundHandlers) handler(inbound);
+
+    if (inbound.kind === "response") {
+      if (typeof inbound.id !== "number") return;
+
+      const pending = this.pending.get(inbound.id);
       if (!pending) return;
 
-      this.pending.delete(id);
-      if (message.error) {
-        pending.reject(new Error(JSON.stringify(message.error)));
+      this.pending.delete(inbound.id);
+      if (inbound.error) {
+        pending.reject(new Error(JSON.stringify(inbound.error)));
       } else {
-        pending.resolve(message.result ?? null);
+        pending.resolve(inbound.result ?? null);
       }
       return;
     }
 
-    if (typeof message.method === "string") {
+    if (inbound.kind === "server_request") {
+      for (const handler of this.serverRequestHandlers) handler(inbound);
+      return;
+    }
+
+    if (inbound.kind === "notification") {
       const event: RpcNotification = {
-        method: message.method,
-        params: message.params
+        method: inbound.method,
+        params: inbound.params
       };
       for (const handler of this.notificationHandlers) handler(event);
     }
@@ -151,4 +208,32 @@ export class CodexWsClient {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
   }
+}
+
+function classifyInbound(message: JsonObject): RpcInbound {
+  const id = readRpcId(message);
+  const method = typeof message.method === "string" ? message.method : undefined;
+
+  if (id !== undefined && method) {
+    return { kind: "server_request", id, method, params: message.params };
+  }
+
+  if (id !== undefined) {
+    return { kind: "response", id, result: message.result, error: message.error };
+  }
+
+  if (method) {
+    return { kind: "notification", method, params: message.params };
+  }
+
+  return {
+    kind: "notification",
+    method: "unknown",
+    params: message
+  };
+}
+
+function readRpcId(message: JsonObject): number | string | undefined {
+  if (typeof message.id === "number" || typeof message.id === "string") return message.id;
+  return undefined;
 }

@@ -12,7 +12,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "spike:repl": "bun src/spike/cli-repl.ts",
+    "spike:turn": "bun src/spike/turn-probe.ts",
+    "spike:diff-tool": "bun src/spike/diff-tool-probe.ts",
     "spike:approval": "bun src/spike/approval-demo.ts",
+    "spike:cancel": "bun src/spike/cancel-probe.ts",
+    "spike:reconnect": "bun src/spike/reconnect-probe.ts",
+    "spike:pointer-store": "bun src/spike/pointer-store-probe.ts",
     "start:codex": "bash scripts/start-codex-app-server.sh"
   },
   "dependencies": {

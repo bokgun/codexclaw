@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { CodexWsClient, JsonObject } from "../codex/ws-client.js";
-import { textInput } from "../codex/input.js";
 import { getCodexConnectionConfig } from "../config/env.js";
+import { readThreadId, startTurn, summarizeValue } from "./probe-utils.js";
 
 const { wsUrl, tokenFile } = getCodexConnectionConfig();
 
@@ -12,12 +12,16 @@ let threadId: string | undefined;
 client.onNotification((event) => {
   if (event.method.includes("delta") && event.params) {
     const params = event.params as JsonObject;
-    const text = typeof params.delta === "string" ? params.delta : JSON.stringify(params);
-    process.stdout.write(text);
+    if (typeof params.delta === "string") process.stdout.write(params.delta);
+    else console.error(`\n[event] ${event.method} ${summarizeValue(event.params)}`);
     return;
   }
 
-  console.error(`\n[event] ${event.method} ${event.params ? JSON.stringify(event.params) : ""}`);
+  console.error(`\n[event] ${event.method} ${summarizeValue(event.params)}`);
+});
+
+client.onServerRequest((request) => {
+  console.error(`\n[server request] id=${request.id} method=${request.method} params=${summarizeValue(request.params)}`);
 });
 
 await client.connect();
@@ -27,7 +31,7 @@ const thread = (await client.request("thread/start", {})) as JsonObject;
 threadId = readThreadId(thread);
 
 if (!threadId) {
-  throw new Error(`Unable to read thread id from thread/start response: ${JSON.stringify(thread)}`);
+  throw new Error(`Unable to read thread id from thread/start response shape: ${summarizeValue(thread)}`);
 }
 
 console.error(`thread: ${threadId}`);
@@ -42,10 +46,7 @@ try {
     if (!prompt.trim()) continue;
 
     try {
-      await client.request("turn/start", {
-        threadId,
-        input: [textInput(prompt)]
-      });
+      await startTurn(client, threadId, prompt);
     } catch (error) {
       console.error(`\n[request error] ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -64,17 +65,4 @@ async function readPrompt(repl: ReturnType<typeof createInterface>): Promise<str
     }
     throw error;
   }
-}
-
-function readThreadId(response: JsonObject): string | undefined {
-  if (typeof response.thread_id === "string") return response.thread_id;
-  if (typeof response.threadId === "string") return response.threadId;
-
-  const thread = response.thread;
-  if (thread && typeof thread === "object" && !Array.isArray(thread)) {
-    const id = (thread as JsonObject).id;
-    if (typeof id === "string") return id;
-  }
-
-  return undefined;
 }
