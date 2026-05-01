@@ -1,4 +1,4 @@
-# PRD — Codex App-Server 기반 Nanoclaw-like 에이전트 (코드명: **NanoCodex**)
+# PRD — Codex App-Server 기반 Nanoclaw-like 에이전트 (코드명: **codexclaw**)
 
 > **상태**: v1.0 (Final, M0 spike 진행 준비 완료)
 > **작성일**: 2026-04-30 (최초) / 2026-05-01 (v1.0 확정)
@@ -21,7 +21,7 @@
 
 ## 1. 개요 (Overview)
 
-**NanoCodex**는 OpenAI Codex CLI에 내장된 `codex app-server`의 WebSocket 인터페이스에 외부에서 접속하는 **독립 클라이언트 에이전트**다. Codex 내부 코드를 수정하거나 패치하지 않으며, 공식적으로 제공되는 JSON-RPC 2.0 프로토콜만을 사용한다.
+**codexclaw**는 OpenAI Codex CLI에 내장된 `codex app-server`의 WebSocket 인터페이스에 외부에서 접속하는 **독립 클라이언트 에이전트**다. Codex 내부 코드를 수정하거나 패치하지 않으며, 공식적으로 제공되는 JSON-RPC 2.0 프로토콜만을 사용한다.
 
 목표는 nanoclaw가 Claude Agent SDK 위에서 만들어낸 "개인이 소유·감사 가능한 미니멀 에이전트" 경험을 **Codex 진영에서 재현**하는 것이다. 즉:
 
@@ -29,11 +29,11 @@
 - 격리된 컨테이너에서 실행 중인 `codex app-server`로 라우팅하고
 - 결과를 실시간 스트림으로 다시 채널에 돌려준다.
 
-NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리/스케줄 레이어"** 다.
+codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리/스케줄 레이어"** 다.
 
 > **크레디트 & 상표 안내**
-> NanoCodex는 [nanoclaw](https://github.com/qwibitai/nanoclaw)에서 영감을 받아 시작된 독립 OSS 프로젝트다. 컨테이너 격리·채널 어댑터·미니멀 호스트 모델 등 nanoclaw가 정립한 패턴을 Codex 진영에 적용한다.
-> "Codex"는 OpenAI의 제품명이며, NanoCodex는 OpenAI와 무관한 독립 클라이언트다 — 어떤 형태로도 OpenAI의 후원·인증을 받지 않는다.
+> codexclaw는 [nanoclaw](https://github.com/qwibitai/nanoclaw)에서 영감을 받아 시작된 독립 OSS 프로젝트다. 컨테이너 격리·채널 어댑터·미니멀 호스트 모델 등 nanoclaw가 정립한 패턴을 Codex 진영에 적용한다.
+> "Codex"는 OpenAI의 제품명이며, codexclaw는 OpenAI와 무관한 독립 클라이언트다 — 어떤 형태로도 OpenAI의 후원·인증을 받지 않는다.
 
 ---
 
@@ -58,7 +58,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 ### 2.4 nanoclaw와 무엇이 다른가
 - **에이전트 엔진**: Claude Agent SDK가 아니라 `codex app-server` (JSON-RPC over WebSocket).
 - **모델**: Claude가 아니라 GPT-5 계열(Codex가 선택). 멀티 프로바이더는 비목표.
-- **세션/스레드 모델**: nanoclaw는 자체 스레드 모델을 보유, NanoCodex는 **Codex의 thread/turn 모델을 그대로 재사용**.
+- **세션/스레드 모델**: nanoclaw는 자체 스레드 모델을 보유, codexclaw는 **Codex의 thread/turn 모델을 그대로 재사용**.
 
 ---
 
@@ -87,9 +87,9 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 
 ## 4. 페르소나 / 사용자 시나리오
 
-**P1. 1인 개발자 "지훈"** — 항상 켜져 있는 미니PC에 NanoCodex를 띄우고 Telegram으로 자기 코드베이스에 명령을 보낸다. 출퇴근 길 핸드폰에서 "test failing on CI 확인하고 PR draft 만들어줘"를 보내면, Codex가 컨테이너 안에서 작업하고 diff 미리보기를 메시지로 돌려준다.
+**P1. 1인 개발자 "지훈"** — 항상 켜져 있는 미니PC에 codexclaw를 띄우고 Telegram으로 자기 코드베이스에 명령을 보낸다. 출퇴근 길 핸드폰에서 "test failing on CI 확인하고 PR draft 만들어줘"를 보내면, Codex가 컨테이너 안에서 작업하고 diff 미리보기를 메시지로 돌려준다.
 
-**P2. 소규모 팀 "Qwibit-style"** — 공유 Slack 채널에 NanoCodex를 두고, 멤버가 멘션하면 자기 thread에서 Codex가 응답한다(D5에 따라 v1.0은 user_key 기준 개인 모드). 승인이 필요한 명령은 Slack 버튼으로 처리.
+**P2. 소규모 팀 "Qwibit-style"** — 공유 Slack 채널에 codexclaw를 두고, 멤버가 멘션하면 자기 thread에서 Codex가 응답한다(D5에 따라 v1.0은 user_key 기준 개인 모드). 승인이 필요한 명령은 Slack 버튼으로 처리.
 
 **P3. 자동화 운영자 "민지"** — Cron 스케줄로 매주 월요일 아침에 "지난주 git log 요약 + README drift 점검"을 Codex에게 시키고, 결과를 Telegram으로 받는다. 작업은 task 전용 명명 thread에 바인딩되어 default thread를 오염시키지 않는다(§8.2).
 
@@ -101,7 +101,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Host (NanoCodex)                        │
+│                     Host (codexclaw)                        │
 │                                                             │
 │  ┌──────────────┐   ┌────────────┐   ┌──────────────────┐   │
 │  │  Channels    │   │  Router /  │   │ Pointer Store    │   │
@@ -139,10 +139,10 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 3. 사용자 메시지를 활성 thread에 `turn.start`(또는 동등 메서드)로 보낸다.
 4. Codex가 보내는 알림 스트림(`agentMessage/delta`, `tool/use`, `turn/diff/updated`, `serverRequest/approval`)을 어댑터가 채널 메시지로 번역해 송출.
 5. 승인이 필요한 경우 Approval Bridge가 채널 UX로 사용자 응답을 받아 JSON-RPC `result`로 회신.
-6. 턴 종료 시 Pointer Store는 `last_routed_at`만 갱신한다. 대화 본문·diff·tool 호출은 Codex rollout에 자동 영속화되므로 NanoCodex가 별도로 저장하지 않는다.
+6. 턴 종료 시 Pointer Store는 `last_routed_at`만 갱신한다. 대화 본문·diff·tool 호출은 Codex rollout에 자동 영속화되므로 codexclaw가 별도로 저장하지 않는다.
 
 ### 5.3 격리 모델
-- 권장 배포: `codex app-server`를 **Docker 컨테이너 안에서** 실행, NanoCodex 호스트는 컨테이너 밖.
+- 권장 배포: `codex app-server`를 **Docker 컨테이너 안에서** 실행, codexclaw 호스트는 컨테이너 밖.
 - 호스트 ↔ 컨테이너는 WebSocket(loopback 또는 forwarded port)으로만 연결.
 - 코드/자격증명 마운트 정책은 nanoclaw와 동일 원칙: **명시적으로 마운트한 디렉토리만 보인다**, 자격증명은 환경변수가 아닌 프록시/시크릿 매니저를 통해 주입.
 
@@ -158,7 +158,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 - 백프레셔: 서버 큐 포화 시 `-32001 "Server overloaded; retry later."` 응답 → 클라이언트는 지수 백오프 + 지터로 재시도.
 
 ### 6.2 클라이언트 식별
-- `initialize.params.clientInfo`에 `name="nanocodex"`, `version`, `title`을 항상 채운다 (OpenAI Compliance Logs 정책 준수).
+- `initialize.params.clientInfo`에 `name="codexclaw"`, `version`, `title`을 항상 채운다 (OpenAI Compliance Logs 정책 준수).
 
 ### 6.3 스키마 동기화
 - 빌드 파이프라인에 `codex app-server generate-ts --out ./schemas`를 포함, **Codex 버전 핀과 함께** 타입을 갱신한다.
@@ -167,7 +167,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 - M0 spike에서 실측한 method/event 이름을 `docs/M0-findings.md`에 고정하고, 이후 변경은 명시적 PR로만 반영한다.
 
 ### 6.4 인증 / 토큰 관리
-- 권장: `--ws-token-file`로 고엔트로피 토큰을 파일로 전달, NanoCodex는 동일 파일을 읽어 헤더에 실어 보낸다.
+- 권장: `--ws-token-file`로 고엔트로피 토큰을 파일로 전달, codexclaw는 동일 파일을 읽어 헤더에 실어 보낸다.
 - Public IP 노출 시 wss + reverse proxy(예: Caddy) 강제, 비-loopback 무인증 listener는 금지.
 
 ---
@@ -198,11 +198,11 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 
 ### 8.1 Memory 분업 원칙
 
-**Codex app-server의 rollout(JSONL, `~/.codex/sessions/`)과 sqlite 메타데이터가 thread 콘텐츠의 단일 진실의 원천(SSoT)이다.** NanoCodex DB는 Codex가 모르는 *NanoCodex 도메인의 매핑*만 보관하며, 대화 본문은 결코 복제하지 않는다.
+**Codex app-server의 rollout(JSONL, `~/.codex/sessions/`)과 sqlite 메타데이터가 thread 콘텐츠의 단일 진실의 원천(SSoT)이다.** codexclaw DB는 Codex가 모르는 *codexclaw 도메인의 매핑*만 보관하며, 대화 본문은 결코 복제하지 않는다.
 
 #### 무엇을 어디에 두는가
 
-| 정보 | Codex (rollout + sqlite) | NanoCodex (`nanocodex.db`) |
+| 정보 | Codex (rollout + sqlite) | codexclaw (`codexclaw.db`) |
 | --- | :---: | :---: |
 | 대화 turn 본문, tool 호출, diff | ✅ | ❌ |
 | 승인 결정 이력 | ✅ | ❌ |
@@ -217,7 +217,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 | 사용자 가벼운 선호(언어, 톤 등 — §8.5) | ❌ | ✅ |
 | AGENTS.md 본문(에이전트 가드레일·권한) | ✅ (파일시스템) | ❌ |
 
-#### NanoCodex SQLite 스키마 (테이블 4개)
+#### codexclaw SQLite 스키마 (테이블 4개)
 
 - `threads(user_key, label, thread_id, is_default, status, last_routed_at, suppress_branch_until)`
   - `(user_key, label)` 유니크. `label='default'`는 사용자당 1개. 명명 thread는 N개.
@@ -237,7 +237,7 @@ NanoCodex는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 - **부팅 동기화**: 시작 시 `thread/list`로 매핑이 가리키는 모든 `thread_id`의 status를 검증하고 `threads.status`를 갱신한다. Codex 측 archived는 `status='archived'`, 존재하지 않으면 `status='missing'`. 사용자에게는 `unarchive` 또는 새 thread 생성을 제안.
 - **Drift 감지**: 라우팅 직전 `thread/read`(turns 미포함)로 status를 가볍게 확인. 변경이 감지되면 사용자에게 안내 후 진행.
 - **Compaction 알림**: Codex가 thread를 압축하면 채널에 1회 안내(예: "이 thread는 이전 N턴이 요약되었습니다"). 알림은 `thread/status/changed` 구독으로 수신.
-- **삭제**: 사용자가 thread를 지우면 NanoCodex는 매핑을 제거하고 Codex에는 `thread/archive`만 호출한다. rollout 파일의 hard delete는 사용자가 Codex CLI에서 직접 수행하도록 가이드한다(우리가 대신 지우지 않는다).
+- **삭제**: 사용자가 thread를 지우면 codexclaw는 매핑을 제거하고 Codex에는 `thread/archive`만 호출한다. rollout 파일의 hard delete는 사용자가 Codex CLI에서 직접 수행하도록 가이드한다(우리가 대신 지우지 않는다).
 
 ### 8.2 Scheduler
 
@@ -268,7 +268,7 @@ Codex의 `serverRequest/approval`을 채널 UX로 변환한다. v1은 **3-way �
 
 #### 응답 옵션과 Codex 매핑
 
-| 사용자 응답 | NanoCodex 동작 | Codex 호출 |
+| 사용자 응답 | codexclaw 동작 | Codex 호출 |
 | --- | --- | --- |
 | **Approve** | 승인 그대로 회신 | `serverRequest/approval` → result: `{decision: "approved"}` |
 | **Reject** | 거부 그대로 회신 | `serverRequest/approval` → result: `{decision: "rejected"}` |
@@ -307,9 +307,9 @@ Codex의 `serverRequest/approval`을 채널 UX로 변환한다. v1은 **3-way �
 
 #### 새 thread 제안 (자동 분기 ❌, 제안 ⭕)
 
-Thread를 사용자 단위로 묶으면 시간이 흐르며 무관한 주제가 누적되어 **컨텍스트 오염**이 일어난다. NanoCodex는 이를 자동 폐기로 해결하지 않는다 — 맥락의 자동 폐기는 회복 불가능하기 때문이다. 대신 **제안만** 한다.
+Thread를 사용자 단위로 묶으면 시간이 흐르며 무관한 주제가 누적되어 **컨텍스트 오염**이 일어난다. codexclaw는 이를 자동 폐기로 해결하지 않는다 — 맥락의 자동 폐기는 회복 불가능하기 때문이다. 대신 **제안만** 한다.
 
-- **트리거 (v1)**: 활성 thread에 마지막 turn 이후 **4시간 이상 경과**한 상태에서 새 메시지가 오면, NanoCodex가 turn을 보내기 직전에 채널에 한 번 묻는다:
+- **트리거 (v1)**: 활성 thread에 마지막 turn 이후 **4시간 이상 경과**한 상태에서 새 메시지가 오면, codexclaw가 turn을 보내기 직전에 채널에 한 번 묻는다:
   > "마지막 작업 이후 4시간이 지났어요. 새 thread로 시작할까요? `[새로 시작] [이어가기]`"
 - **주제 변화 기반 제안**은 매 turn LLM 판단이 필요해 비용·지연을 유발하므로 **v2로 미룬다.**
 - **Throttle**: 같은 사용자에게 분기 제안은 **하루 최대 1회**. 사용자가 "이어가기"를 선택하면 해당 thread에 대해 7일간 다시 묻지 않는다 — `threads.suppress_branch_until`을 7일 뒤로 설정한다(§8.1 참조). 시스템 상태이므로 `prefs`가 아니라 `threads` 테이블 컬럼에 둔다.
@@ -319,8 +319,8 @@ Thread를 사용자 단위로 묶으면 시간이 흐르며 무관한 주제가 
 
 AGENTS.md는 에이전트의 권한·가드레일을 정의하는 **신뢰 경계 파일**이다. 채널 메시지로 직접 편집할 수 있게 만들면 prompt injection이 곧바로 가드레일 우회로 이어진다(§9 참조). 따라서 채널을 통한 변경은 **무게에 따라 두 갈래로** 분리한다.
 
-#### 가벼운 선호 (NanoCodex `prefs` 테이블)
-사용자별 톤·언어 같은 **권한과 무관한** 설정만 채널에서 즉시 반영. turn 시작 시 NanoCodex가 시스템 메시지로 첨부.
+#### 가벼운 선호 (codexclaw `prefs` 테이블)
+사용자별 톤·언어 같은 **권한과 무관한** 설정만 채널에서 즉시 반영. turn 시작 시 codexclaw가 시스템 메시지로 첨부.
 
 | 명령 | 동작 |
 | --- | --- |
@@ -336,10 +336,10 @@ AGENTS.md는 에이전트의 권한·가드레일을 정의하는 **신뢰 경�
 | 명령 | 동작 |
 | --- | --- |
 | `/agents show` | 현재 AGENTS.md 본문 표시 (읽기 전용) |
-| `/agents propose <변경 요청>` | Codex에게 AGENTS.md 변경안 작성을 시킴. 결과는 **diff**로만 채널에 노출되고, 실제 적용은 사용자가 호스트에서 `git apply` 또는 PR 머지로 수행. NanoCodex는 절대 직접 쓰지 않는다. |
+| `/agents propose <변경 요청>` | Codex에게 AGENTS.md 변경안 작성을 시킴. 결과는 **diff**로만 채널에 노출되고, 실제 적용은 사용자가 호스트에서 `git apply` 또는 PR 머지로 수행. codexclaw는 절대 직접 쓰지 않는다. |
 
 #### 불변 원칙
-- NanoCodex는 어떤 경로로도 AGENTS.md를 직접 수정하지 않는다.
+- codexclaw는 어떤 경로로도 AGENTS.md를 직접 수정하지 않는다.
 - `prefs` 테이블의 값은 시스템 메시지에 텍스트로 포함되며, 도구 호출 권한이나 sandbox 정책을 절대 변경할 수 없다.
 - 시스템 메시지로 첨부되는 선호값에는 명령어 prefix(`/`, `!`, 시스템 토큰 등)를 검출해 escape한다 — 사용자가 `prefs.tone`에 prompt injection 페이로드를 넣어도 데이터로만 취급되도록.
 
@@ -353,34 +353,34 @@ AGENTS.md는 에이전트의 권한·가드레일을 정의하는 **신뢰 경�
 | 토큰 유출 | `--ws-token-file` + 600 권한, env 직접 사용 금지 |
 | 컨테이너 탈출 | 비-root, 읽기 전용 마운트, 명시적 allowlist, symlink escape 검사 |
 | 채널 측 사칭 | 채널별 서명 검증(Slack signing secret, Telegram secret_token) |
-| 승인 우회 | NanoCodex는 Codex의 sandbox/approval 정책을 결코 약화시키지 않는다. `--yolo`, `dangerously-bypass-*`는 호스트 설정에서 차단 |
+| 승인 우회 | codexclaw는 Codex의 sandbox/approval 정책을 결코 약화시키지 않는다. `--yolo`, `dangerously-bypass-*`는 호스트 설정에서 차단 |
 | Prompt injection from channel | 인바운드 메시지에 시스템-메타 명령 prefix를 절대 신뢰하지 않음. 슬래시 명령은 채널 어댑터 단에서만 해석. `prefs` 값은 시스템 메시지 첨부 시 명령어 prefix를 escape |
-| AGENTS.md 가드레일 우회 | NanoCodex는 AGENTS.md를 직접 수정하지 않는다. 채널에서는 읽기(`/agents show`)와 변경 제안(`/agents propose` → diff만 출력)만 허용. 실제 머지는 호스트에서 사용자 손으로 수행 (§8.5) |
+| AGENTS.md 가드레일 우회 | codexclaw는 AGENTS.md를 직접 수정하지 않는다. 채널에서는 읽기(`/agents show`)와 변경 제안(`/agents propose` → diff만 출력)만 허용. 실제 머지는 호스트에서 사용자 손으로 수행 (§8.5) |
 
-**불변 원칙**: NanoCodex는 절대로 Codex의 보안 결정을 *대신 내리지 않는다*. 우리는 결정을 **운반**할 뿐이다.
+**불변 원칙**: codexclaw는 절대로 Codex의 보안 결정을 *대신 내리지 않는다*. 우리는 결정을 **운반**할 뿐이다.
 
 ---
 
 ## 10. 비기능 요구사항
 
-- **언어/런타임**: TypeScript on Node.js 20+ (또는 Bun). nanoclaw와 동일한 친숙도.
+- **언어/런타임**: TypeScript on Bun 1.1+. nanoclaw와 동일한 친숙도.
 - **재연결**: WS 끊김 시 지수 백오프(최대 30초). **실시간 스트림 복구는 nice-to-have**(끊긴 동안의 `agentMessage/delta`를 다시 받지 못할 수 있음), **thread 상태 복구는 must-have** — 재연결 후 `thread/read`로 현재 상태를 재동기화하고, 사용자에게는 "X턴이 진행 중이었습니다, 결과 요약을 확인하세요" 형태로 알린다. 중복 `turn.start` 방지는 클라이언트 측 idempotency key로 처리(M0에서 검증).
 - **스루풋**: v1은 동시 활성 thread ≤ 16, 분당 메시지 ≤ 120 가정.
 - **관측성**: stderr 구조화 로그(JSON line), `LOG_FORMAT=json`. 별도 대시보드 없음.
 - **테스트**: Codex app-server를 mock하는 in-process WS 서버로 골든 테스트.
-- **배포**: `bash nanocodex.sh` 한 줄 설치. Raspberry Pi 4 / 8GB에서 동작.
+- **배포**: `bash codexclaw.sh` 한 줄 설치. Raspberry Pi 4 / 8GB에서 동작.
 
 ---
 
 ## 11. 구성 (Configuration)
 
-NanoCodex는 nanoclaw처럼 **설정 파일 최소주의**를 따른다. 단, Codex와 달리 외부 자격증명을 다뤄야 하므로 한 개의 `.env`는 허용한다.
+codexclaw는 nanoclaw처럼 **설정 파일 최소주의**를 따른다. 단, Codex와 달리 외부 자격증명을 다뤄야 하므로 한 개의 `.env`는 허용한다.
 
 ```
-NANOCODEX_CODEX_WS=ws://127.0.0.1:4500
-NANOCODEX_CODEX_TOKEN_FILE=/var/lib/nanocodex/codex.token
-NANOCODEX_DB=/var/lib/nanocodex/nanocodex.db
-NANOCODEX_TRIGGER=@codex
+CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500
+CODEXCLAW_CODEX_TOKEN_FILE=/var/lib/codexclaw/codex.token
+CODEXCLAW_DB=/var/lib/codexclaw/codexclaw.db
+CODEXCLAW_TRIGGER=@codex
 TELEGRAM_BOT_TOKEN=...
 SLACK_SIGNING_SECRET=...
 ```
@@ -398,7 +398,7 @@ SLACK_SIGNING_SECRET=...
 | **M2 — Telegram** | Telegram 어댑터 + 인라인 승인 UX + 새 thread 제안 UX. | 1주 |
 | **M3 — Slack + Scheduler** | Slack 어댑터(개인 모드만 stable), Scheduler(retry/timeout/dedupe), `prefs` KV. | 2주 |
 | **M4 — Hardening** | wss 가이드, 컨테이너 레퍼런스, 관측성, 부팅 시 thread/list 동기화. | 1주 |
-| **v1.0 GA** | 문서화, `nanocodex.sh` 설치 스크립트. | — |
+| **v1.0 GA** | 문서화, `codexclaw.sh` 설치 스크립트. | — |
 
 **M0 Gate**: §16의 5건 성공 판정을 모두 통과해야 M1 진입. 4건 실패 판정 중 하나라도 발생 시 PRD 수정 또는 stdio 폴백(R1)으로 우회.
 
@@ -421,11 +421,11 @@ SLACK_SIGNING_SECRET=...
 
 ### 리스크
 - **R1. WebSocket 폐기/변경**: stdio 트랜스포트로의 폴백 어댑터를 동일 인터페이스로 v1에 함께 출시(컨테이너 내부에서 spawn).
-- **R2. 토큰 사용량 폭증**: v1은 NanoCodex 자체 한도 기능을 도입하지 않는다. 폭주의 주요 경로인 자동화 task는 §8.2의 `timeout` + 5회 연속 실패 자동 비활성으로 차단되며, 사용자 사용량 자체는 Codex/ChatGPT 측 한도와 청구 화면을 단일 진실의 원천으로 본다. 자체 한도(일/thread budget) 도입은 실사용 데이터 확보 후 v2에서 재검토.
+- **R2. 토큰 사용량 폭증**: v1은 codexclaw 자체 한도 기능을 도입하지 않는다. 폭주의 주요 경로인 자동화 task는 §8.2의 `timeout` + 5회 연속 실패 자동 비활성으로 차단되며, 사용자 사용량 자체는 Codex/ChatGPT 측 한도와 청구 화면을 단일 진실의 원천으로 본다. 자체 한도(일/thread budget) 도입은 실사용 데이터 확보 후 v2에서 재검토.
 - **R3. OpenAI 정책 변화**: ChatGPT 구독 내 Codex 사용 약관 준수, 비상업/상업 구분 명시.
 - **R4. 스트림 복구 한계**: WS 끊김 동안 발생한 `agentMessage/delta`를 재연결 후 다시 받지 못할 수 있다. §10의 "실시간 스트림 복구 = nice-to-have, thread 상태 복구 = must-have" 정책으로 대응 — 재연결 후에는 `thread/read`로 상태를 재동기화하고 사용자에게 결과 요약 형태로 알린다. M0에서 실측한 동작에 따라 보강.
 - **R5. Approval 다층화**: command approval / patch approval / network approval이 별도 메서드/스키마일 수 있고, 회신 페이로드가 단순 boolean이 아닐 수 있다. M0에서 케이스 3종 이상 실측해 §8.3의 "Approve/Reject/Modify → JSON-RPC result" 매핑을 구체 스키마로 굳힌다. 매핑이 깔끔하지 않으면 §8.3을 재작성.
-- **R6. Cancel 비결정성**: turn 취소 후에도 tool 프로세스가 남거나 thread가 busy 상태로 고착될 수 있다. 대응: cancel 실패 시 NanoCodex가 해당 thread를 **quarantine 상태**로 표시하고 사용자에게 `/new` 또는 `/branch` 권장. 이 상태 표시는 Pointer Store의 `threads.status` 컬럼으로 표현.
+- **R6. Cancel 비결정성**: turn 취소 후에도 tool 프로세스가 남거나 thread가 busy 상태로 고착될 수 있다. 대응: cancel 실패 시 codexclaw가 해당 thread를 **quarantine 상태**로 표시하고 사용자에게 `/new` 또는 `/branch` 권장. 이 상태 표시는 Pointer Store의 `threads.status` 컬럼으로 표현.
 
 ### 결정된 사항 (Resolved)
 - **D1 (← Q1)**: Thread 스코프는 **사용자 단위**다. 채널은 입출력 창구일 뿐 thread를 분기시키지 않는다. 사용자당 default thread 1개 + 명명 thread N개의 하이브리드 모델을 채택하며, 새 thread 생성·전환은 `/new`, `/switch`, `/branch` 등 명시적 슬래시 명령으로만 일어난다(§8.4 참조). 시간 경과 등 휴리스틱은 thread를 **자동 폐기하지 않는다** — 다만 채널에 **새 thread 제안**은 할 수 있다(§8.4 "새 thread 제안" 참조). 자동 폐기와 자동 제안은 다르다: 전자는 회복 불가능하지만 후자는 사용자가 거절하면 그만이다.
@@ -436,10 +436,10 @@ SLACK_SIGNING_SECRET=...
   - **D4b — Scheduler 제어 의무화**: `retry`, `timeout`, `dedupe(concurrency=1)`을 모든 task의 필수 필드로. 5회 연속 실패 시 자동 비활성(§8.2).
   - **D4c — 컨텍스트 오염 방지**: 휴면 4시간 후 채널에 새 thread 제안. 자동 분기는 하지 않으며, 제안은 하루 1회로 throttle(§8.4).
 - **D5 (← Q4)**: 팀 Slack에서의 thread 스코프는 **v1.0에서 `user_key` 기준 개인 모드만 stable**로 확정. 공유 채널에서도 멘션은 발화자 본인의 1:1 thread로 라우팅된다 — A가 시작한 thread에 B가 이어 말하면 B의 발화는 B의 thread로 간다. 팀 thread 공유(`channel_key + mention_thread` 기준)는 **v1.x experimental 플래그** 뒤에서만 활성화하며 기본은 비활성. 사유: 다중 사용자 thread는 §8.5(prompt injection 방어), §8.3(approval 귀속 — "누가 승인 권한을 갖는가"), §8.1(rollout이 누구의 컨텍스트인지) 모두에서 별도 설계가 필요하다. 이걸 v1.0 GA 전에 풀려고 하면 다른 결정들이 흔들린다. M0(§16)는 CLI/Telegram 개인 모드만 검증하며, Slack 어댑터(§12 M3)도 개인 모드부터 stable하게 출시.
-- **D6 (OSS·라이선스)**: NanoCodex는 **공개 OSS 프로젝트**로 출시한다(GitHub public). 라이선스는 **MIT** — 가장 단순·관대하며, nanoclaw를 비롯한 미니멀 OSS 호스트의 표준이다. 사유: §1·§2의 "개인이 소유·감사 가능한 미니멀 에이전트" 가치, §13의 "외부 PR로 추가 채널 어댑터" 지표, nanoclaw를 레퍼런스로 삼는 문맥 전체가 OSS를 전제로 일관됨. v0.7까지의 "Internal" 분류는 v0.1 초안의 자리표시자였으며 v0.8에서 정정. 정책: 외부 기여자가 보는 문서임을 전제로 PRD·README·기여 가이드를 작성한다(과한 사내 약어·맥락 회피).
+- **D6 (OSS·라이선스)**: codexclaw는 **공개 OSS 프로젝트**로 출시한다(GitHub public). 라이선스는 **MIT** — 가장 단순·관대하며, nanoclaw를 비롯한 미니멀 OSS 호스트의 표준이다. 사유: §1·§2의 "개인이 소유·감사 가능한 미니멀 에이전트" 가치, §13의 "외부 PR로 추가 채널 어댑터" 지표, nanoclaw를 레퍼런스로 삼는 문맥 전체가 OSS를 전제로 일관됨. v0.7까지의 "Internal" 분류는 v0.1 초안의 자리표시자였으며 v0.8에서 정정. 정책: 외부 기여자가 보는 문서임을 전제로 PRD·README·기여 가이드를 작성한다(과한 사내 약어·맥락 회피).
   - **README 필수 문구** (출시 전 의무):
-    - 상표 디스클레이머: *"NanoCodex is an independent open-source client for Codex app-server. It is not affiliated with or endorsed by OpenAI."* (또는 동등한 한국어 표현)
-    - nanoclaw 크레디트: *"Inspired by [nanoclaw](https://github.com/qwibitai/nanoclaw). The container-isolation and channel-adapter patterns originate there; NanoCodex adapts them for the Codex ecosystem."*
+    - 상표 디스클레이머: *"codexclaw is an independent open-source client for Codex app-server. It is not affiliated with or endorsed by OpenAI."* (또는 동등한 한국어 표현)
+    - nanoclaw 크레디트: *"Inspired by [nanoclaw](https://github.com/qwibitai/nanoclaw). The container-isolation and channel-adapter patterns originate there; codexclaw adapts them for the Codex ecosystem."*
   - 라이선스 파일(`LICENSE`)은 MIT 표준 텍스트를 그대로 사용한다.
 
 ### 미해결 질문
@@ -557,7 +557,7 @@ docs/M0-findings.md                 # 실측 method/event 이름, 스키마 차�
 실패 항목의 성격에 따라 두 갈래로 갈린다 — 어느 쪽인지 명확히 판단해야 잘못된 방향으로 끌고 가지 않는다.
 
 - **WS transport만 문제 (실패 #1)** → **stdio 폴백** (R1). app-server를 stdio로 spawn해 같은 JSON-RPC 메시지를 파이프로 주고받는다. 클라이언트 인터페이스(`ws-client.ts`)는 transport 레이어만 교체되며, thread/turn/approval 모델은 그대로 유효하다. PRD 본문 수정은 §6과 §10 일부에 그침.
-- **approval/thread/cancel 자체가 외부 제어에 부적합 (실패 #2/#3/#4)** → **제품 범위 재설계.** Codex app-server가 외부 클라이언트의 1급 시민(first-class citizen)으로 동작하지 않는다는 신호다. NanoCodex의 핵심 가치(승인 브릿지, thread 수명 관리, scheduler 안전망)가 성립하지 않으므로 PRD 본문(특히 §8.2/§8.3/§8.4)의 재설계가 필요하다. 단순 폴백으로 해결되지 않는다.
+- **approval/thread/cancel 자체가 외부 제어에 부적합 (실패 #2/#3/#4)** → **제품 범위 재설계.** Codex app-server가 외부 클라이언트의 1급 시민(first-class citizen)으로 동작하지 않는다는 신호다. codexclaw의 핵심 가치(승인 브릿지, thread 수명 관리, scheduler 안전망)가 성립하지 않으므로 PRD 본문(특히 §8.2/§8.3/§8.4)의 재설계가 필요하다. 단순 폴백으로 해결되지 않는다.
 
 ---
 
