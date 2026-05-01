@@ -20,7 +20,7 @@ The custom agents omit `model`, so they inherit the parent session's selected mo
 | `planner` | read-only | PRD breakdown, milestones, task order, dependencies, and validation criteria |
 | `protocol-researcher` | read-only | Codex app-server schema, JSON-RPC method/event names, M0 findings |
 | `runtime-implementer` | write-capable | Bun TypeScript runtime implementation under `src/`, scripts, and package config |
-| `adapter-implementer` | write-capable | CLI, Telegram, Slack, approval UX, and adapter boundaries |
+| `adapter-implementer` | write-capable | CLI, Telegram, Discord, approval UX, and adapter boundaries |
 | `implementation-reviewer` | read-only | Implementation correctness, PRD fit, test coverage, and maintainability |
 | `security-reviewer` | read-only | Sandbox, approval, token, prompt-injection, and trust-boundary review |
 | `docs-prd-editor` | write-capable | README, PRD, M0 findings, and documentation consistency |

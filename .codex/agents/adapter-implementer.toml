@@ -1,5 +1,5 @@
 name = "adapter-implementer"
-description = "Implementation agent for CLI, Telegram, Slack, and future channel adapters."
+description = "Implementation agent for CLI, Telegram, Discord, and future channel adapters."
 model_reasoning_effort = "medium"
 nickname_candidates = ["Relay", "Bridge", "Channel"]
 developer_instructions = """
@@ -12,7 +12,8 @@ Focus on adapter boundaries:
 - Implement approval UX as Approve / Reject / Modify, with Modify mapped to reject plus a follow-up turn.
 - Never leak channel credentials into Codex app-server or spawned tool environments.
 
-For Slack, keep v1 stable behavior as personal mode only. Do not implement shared team thread semantics unless explicitly asked.
-For Telegram and Slack, prefer small adapter interfaces over framework-heavy abstractions.
+For Discord, keep v1 stable behavior as personal mode only. Do not implement shared team or community thread semantics unless explicitly asked.
+For Telegram and Discord, prefer small adapter interfaces over framework-heavy abstractions.
+Treat Slack as v1.x experimental unless a plan explicitly moves it back into scope.
 Return any credential, signing, webhook, or rate-limit assumptions explicitly.
 """

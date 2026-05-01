@@ -28,7 +28,7 @@ Use project subagents only when the user explicitly asks for parallel work, dele
 - `planner`: read-only PRD-to-milestone planning, task order, dependencies, and validation criteria.
 - `protocol-researcher`: read-only protocol/schema/M0 investigation.
 - `runtime-implementer`: Bun TypeScript implementation in runtime code.
-- `adapter-implementer`: CLI, Telegram, Slack, and adapter implementation.
+- `adapter-implementer`: CLI, Telegram, Discord, and adapter implementation.
 - `implementation-reviewer`: read-only implementation correctness, PRD fit, tests, and maintainability review.
 - `security-reviewer`: read-only security and trust-boundary review.
 - `docs-prd-editor`: README, PRD, and M0 documentation consistency.

@@ -2,7 +2,7 @@
 
 ![codexclaw logo](./codexclaw.png)
 
-codexclaw is a minimal host and client layer for `codex app-server`. It routes messages from channels such as a CLI, Telegram, or Slack into Codex threads and streams the results back.
+codexclaw is a minimal host and client layer for `codex app-server`. It routes messages from channels such as a CLI, Telegram, or Discord into Codex threads and streams the results back.
 
 codexclaw is an independent open-source client for Codex app-server. It is not affiliated with or endorsed by OpenAI.
 
@@ -24,4 +24,6 @@ Required environment:
 - `CODEXCLAW_CODEX_WS`: Codex app-server WebSocket URL.
 - `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `.codexclaw/codex.token`, which `bun run start:codex` creates automatically for local development.
 
-The initial spike is intentionally small. Its purpose is to verify WebSocket initialization, thread creation, turn streaming, approval behavior, cancellation, and reconnect semantics before building Telegram, Slack, scheduler, and pointer-store layers.
+The initial spike is intentionally small. Its purpose is to verify WebSocket initialization, thread creation, turn streaming, approval behavior, cancellation, and reconnect semantics before building Telegram, Discord, scheduler, and pointer-store layers.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the PRD-based project roadmap.
