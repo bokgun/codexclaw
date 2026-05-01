@@ -6,6 +6,7 @@
 > **분류**: Public OSS Spec / MIT License (D6)
 
 ### 변경 이력
+- **v1.1** — v1 stable 채널 우선순위 변경. Slack 개인 모드를 v1.0 stable 범위에서 제외하고 v1.x experimental로 이동. v1.0 원격 커뮤니티/팀형 채널은 Discord로 변경. 관련 범위: §3.2, §4 P2, §5 다이어그램, §7.1/§7.3, §8.3 채널 UX, §9 보안 모델, §12 M3, §14 D5, §16 실패 시나리오.
 - **v1.0** — 최종화. PRD draft 단계 종료, M0 spike 진행 준비 완료. 추가: §1에 nanoclaw 영감 크레디트 + Codex 상표 디스클레이머 명시, D6에 README 필수 문구 박음, §16.5 실패 시 분기 명확화(WS-only → stdio 폴백 vs approval/thread/cancel 부적합 → 범위 재설계). M0 통과 시 v1.1, 통과 실패 시 v2.0(범위 재설계)로 승격.
 - **v0.8** — D6 신설(OSS·MIT). 8건 정합성 회복: §16.1 G `threads` 스키마에 `status` 추가(C1), `prefs` 화이트리스트와 시스템 키 충돌 해소 — `threads.suppress_branch_until` 컬럼 신설(C2), §8.1 분업표의 thread_id/timestamp 행 정정(C3), "세션" 용어 잔재 제거(I4), §3.1 Goal 1 "원격" 한정 명확화(I5), §8.4 `/resume` 제거하고 `/switch`로 통합(I6), P3 페르소나 채널을 Telegram으로 정정(M7), §7.2 어댑터 인터페이스를 3-way approval에 맞춰 갱신(M9).
 - **v0.7.1** — 정합성 회복: §12 M0 행의 부록 참조 오류(`§16(부록 A)` → `§16(부록 B)`) 수정. §8.1 `threads` 스키마에 R6에서 이미 약속했던 `status` 컬럼 명시 추가 + enum 정의(`active`/`archived`/`missing`/`quarantined`). §8.1 부팅 동기화와 §8.4 `/archive` 동작 설명을 status 전이로 구체화.
@@ -51,7 +52,7 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 
 ### 2.3 nanoclaw에서 무엇을 가져오는가
 - 단일 호스트 프로세스 + 세션별 격리 컨테이너 모델
-- 채널(WhatsApp, Telegram, Slack 등) → 라우팅 → 에이전트 → 응답의 단방향 흐름
+- 채널(WhatsApp, Telegram, Discord 등) → 라우팅 → 에이전트 → 응답의 단방향 흐름
 - 자격증명을 컨테이너 안으로 절대 흘려보내지 않는 정책 (프록시 주입)
 - "스킬"로 채널/통합을 사후에 추가하는 확장 모델
 
@@ -81,7 +82,7 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 - Codex가 이미 잘하는 작업의 재구현(코드 편집, 패치 적용 등).
 - **Codex Cloud(원격 매니지드 환경) 통합.** v1은 사용자가 소유·운영하는 로컬 또는 SSH 가능한 호스트의 `codex app-server`만 대상으로 한다.
 - 채널을 통한 AGENTS.md 직접 편집(보안 경계 보호 — §8.5 참조).
-- **Slack 다중 사용자 공유 thread**(팀 채널에서 A가 시작한 thread를 B가 이어받는 모델). v1은 개인 모드(user_key 단위)에 집중하며, Slack 팀 모드는 v1.x **experimental**로 분리(§7.3, D5 참조).
+- **Slack 통합 및 다중 사용자 공유 thread**(팀 채널에서 A가 시작한 thread를 B가 이어받는 모델). v1은 Telegram과 Discord에 집중하며, Slack 개인 모드와 팀 모드는 v1.x **experimental**로 분리(§7.3, D5 참조).
 
 ---
 
@@ -89,7 +90,7 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 
 **P1. 1인 개발자 "지훈"** — 항상 켜져 있는 미니PC에 codexclaw를 띄우고 Telegram으로 자기 코드베이스에 명령을 보낸다. 출퇴근 길 핸드폰에서 "test failing on CI 확인하고 PR draft 만들어줘"를 보내면, Codex가 컨테이너 안에서 작업하고 diff 미리보기를 메시지로 돌려준다.
 
-**P2. 소규모 팀 "Qwibit-style"** — 공유 Slack 채널에 codexclaw를 두고, 멤버가 멘션하면 자기 thread에서 Codex가 응답한다(D5에 따라 v1.0은 user_key 기준 개인 모드). 승인이 필요한 명령은 Slack 버튼으로 처리.
+**P2. 소규모 팀 "Qwibit-style"** — Discord 서버에 codexclaw 봇을 두고, 멤버가 멘션하면 자기 thread에서 Codex가 응답한다(D5에 따라 v1.0은 user_key 기준 개인 모드). 승인이 필요한 명령은 Discord 버튼/모달로 처리.
 
 **P3. 자동화 운영자 "민지"** — Cron 스케줄로 매주 월요일 아침에 "지난주 git log 요약 + README drift 점검"을 Codex에게 시키고, 결과를 Telegram으로 받는다. 작업은 task 전용 명명 thread에 바인딩되어 default thread를 오염시키지 않는다(§8.2).
 
@@ -106,7 +107,7 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 │  ┌──────────────┐   ┌────────────┐   ┌──────────────────┐   │
 │  │  Channels    │   │  Router /  │   │ Pointer Store    │   │
 │  │ (Telegram,   │──▶│  Inbox     │──▶│ (SQLite)         │   │
-│  │  Slack, CLI) │   │            │   │ user→thread_id   │   │
+│  │ Discord, CLI)│   │            │   │ user→thread_id   │   │
 │  └──────────────┘   └─────┬──────┘   │ label→thread_id  │   │
 │                           │          │ schedules        │   │
 │                           │          └──────────────────┘   │
@@ -177,7 +178,7 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 ### 7.1 v1 출시 채널
 - **CLI/REPL** (개발·디버깅용, 기본 내장)
 - **Telegram** (개인용 1순위)
-- **Slack** (소규모 팀 1순위)
+- **Discord** (소규모 커뮤니티/팀 1순위)
 
 ### 7.2 어댑터 인터페이스 (개념)
 어댑터는 다음 4가지만 구현하면 된다.
@@ -189,8 +190,8 @@ codexclaw는 본질적으로 **Codex의 "프론트엔드 + 라우터 + 메모리
 - `acknowledge(typing|seen)` (선택)
 
 ### 7.3 향후 확장 (Non-goal v1, 로드맵)
-- WhatsApp(Baileys), Discord, Matrix, iMessage relay, Email(Resend) — 모두 "스킬"로 추가.
-- **Slack 팀 모드 (experimental, v1.x)**: 공유 채널에서 다중 사용자가 thread를 공유하는 모델. v1.0은 개인 모드(`user_key` 기준, 멘션해도 1:1 thread로 매핑)만 stable하게 출시하고, 팀 thread(`channel_key` + 멘션 thread 단위)는 experimental 플래그 뒤에서만 활성화. 기본은 비활성. 사유와 결정 경로는 D5 참조.
+- WhatsApp(Baileys), Slack, Matrix, iMessage relay, Email(Resend) — 모두 "스킬"로 추가.
+- **Slack 개인 모드 및 팀 모드 (experimental, v1.x)**: Slack은 워크스페이스 설치/권한/정책 경계가 더 무거우므로 v1.0 stable 범위에서 제외한다. Slack 개인 모드(`user_key` 기준)와 팀 thread(`channel_key` + 멘션 thread 단위)는 v1.x experimental 플래그 뒤에서만 활성화. 기본은 비활성. 사유와 결정 경로는 D5 참조.
 
 ---
 
@@ -279,7 +280,7 @@ Codex의 `serverRequest/approval`을 채널 UX로 변환한다. v1은 **3-way �
 #### 채널별 UX
 
 - **Telegram**: 인라인 키보드 `[Approve] [Reject] [Modify]`. Modify 선택 시 봇이 reply 모드로 입력 대기.
-- **Slack**: Block Kit 버튼 3종. Modify는 modal 입력창.
+- **Discord**: 메시지 컴포넌트 버튼 3종. Modify는 modal 입력창.
 - **CLI**: `[a]pprove / [r]eject / [m]odify` 프롬프트. m 선택 시 한 줄 입력.
 
 #### 타임아웃·일관성
@@ -352,7 +353,7 @@ AGENTS.md는 에이전트의 권한·가드레일을 정의하는 **신뢰 경�
 | Codex WS 평문 노출 | wss 강제, loopback 외에는 reverse proxy + TLS |
 | 토큰 유출 | `--ws-token-file` + 600 권한, env 직접 사용 금지 |
 | 컨테이너 탈출 | 비-root, 읽기 전용 마운트, 명시적 allowlist, symlink escape 검사 |
-| 채널 측 사칭 | 채널별 서명 검증(Slack signing secret, Telegram secret_token) |
+| 채널 측 사칭 | 채널별 서명 검증(Discord interaction signature, Telegram secret_token) |
 | 승인 우회 | codexclaw는 Codex의 sandbox/approval 정책을 결코 약화시키지 않는다. `--yolo`, `dangerously-bypass-*`는 호스트 설정에서 차단 |
 | Prompt injection from channel | 인바운드 메시지에 시스템-메타 명령 prefix를 절대 신뢰하지 않음. 슬래시 명령은 채널 어댑터 단에서만 해석. `prefs` 값은 시스템 메시지 첨부 시 명령어 prefix를 escape |
 | AGENTS.md 가드레일 우회 | codexclaw는 AGENTS.md를 직접 수정하지 않는다. 채널에서는 읽기(`/agents show`)와 변경 제안(`/agents propose` → diff만 출력)만 허용. 실제 머지는 호스트에서 사용자 손으로 수행 (§8.5) |
@@ -396,7 +397,7 @@ SLACK_SIGNING_SECRET=...
 | **M0 — Spike** | **Codex app-server를 신뢰 가능한 remote agent runtime으로 볼 수 있는지 검증.** WS → thread → stream → approval → cancel → reconnect 순서로 가설 검증. 산출물: WS client(`src/codex/ws-client.ts`), CLI REPL(`src/spike/cli-repl.ts`), approval 데모, 생성된 스키마 핀(`schemas/generated/*`), `docs/M0-findings.md`. **상세 체크리스트·성공/실패 판정 기준은 §16(부록 B) 참조.** | 1주 |
 | **M1 — Core** | Router, Pointer Store(SQLite), 재연결, Approval Bridge(3-way), Thread Manager(slash 명령). | 2주 |
 | **M2 — Telegram** | Telegram 어댑터 + 인라인 승인 UX + 새 thread 제안 UX. | 1주 |
-| **M3 — Slack + Scheduler** | Slack 어댑터(개인 모드만 stable), Scheduler(retry/timeout/dedupe), `prefs` KV. | 2주 |
+| **M3 — Discord + Scheduler** | Discord 어댑터(user_key 기준 개인 모드 stable), Scheduler(retry/timeout/dedupe), `prefs` KV. | 2주 |
 | **M4 — Hardening** | wss 가이드, 컨테이너 레퍼런스, 관측성, 부팅 시 thread/list 동기화. | 1주 |
 | **v1.0 GA** | 문서화, `codexclaw.sh` 설치 스크립트. | — |
 
@@ -435,7 +436,7 @@ SLACK_SIGNING_SECRET=...
   - **D4a — Approval은 3-way**: Approve / Reject / **Modify**. Modify는 reject + 후속 turn으로 Codex 프로토콜에 매핑(§8.3).
   - **D4b — Scheduler 제어 의무화**: `retry`, `timeout`, `dedupe(concurrency=1)`을 모든 task의 필수 필드로. 5회 연속 실패 시 자동 비활성(§8.2).
   - **D4c — 컨텍스트 오염 방지**: 휴면 4시간 후 채널에 새 thread 제안. 자동 분기는 하지 않으며, 제안은 하루 1회로 throttle(§8.4).
-- **D5 (← Q4)**: 팀 Slack에서의 thread 스코프는 **v1.0에서 `user_key` 기준 개인 모드만 stable**로 확정. 공유 채널에서도 멘션은 발화자 본인의 1:1 thread로 라우팅된다 — A가 시작한 thread에 B가 이어 말하면 B의 발화는 B의 thread로 간다. 팀 thread 공유(`channel_key + mention_thread` 기준)는 **v1.x experimental 플래그** 뒤에서만 활성화하며 기본은 비활성. 사유: 다중 사용자 thread는 §8.5(prompt injection 방어), §8.3(approval 귀속 — "누가 승인 권한을 갖는가"), §8.1(rollout이 누구의 컨텍스트인지) 모두에서 별도 설계가 필요하다. 이걸 v1.0 GA 전에 풀려고 하면 다른 결정들이 흔들린다. M0(§16)는 CLI/Telegram 개인 모드만 검증하며, Slack 어댑터(§12 M3)도 개인 모드부터 stable하게 출시.
+- **D5 (← Q4)**: v1.0의 소규모 커뮤니티/팀형 채널은 **Discord 개인 모드 stable**로 확정. Discord 서버에서도 멘션은 발화자 본인의 1:1 thread로 라우팅된다 — A가 시작한 thread에 B가 이어 말하면 B의 발화는 B의 thread로 간다. 공유 thread(`channel_key + mention_thread` 기준)는 v1.0 범위가 아니며, Discord/Slack 모두 v1.x experimental 플래그 뒤에서만 활성화한다. Slack은 개인 모드까지도 v1.0 stable에서 제외하고 v1.x experimental로 이동한다. 사유: Slack은 워크스페이스 설치/권한/정책 경계가 더 무겁고, OSS 개인/소규모 커뮤니티 호스트라는 제품 톤에는 Discord가 더 가볍게 맞는다. 다중 사용자 thread는 §8.5(prompt injection 방어), §8.3(approval 귀속 — "누가 승인 권한을 갖는가"), §8.1(rollout이 누구의 컨텍스트인지) 모두에서 별도 설계가 필요하다. M0(§16)는 CLI/Telegram 개인 모드만 검증하며, Discord 어댑터(§12 M3)도 user_key 기준 개인 모드부터 stable하게 출시.
 - **D6 (OSS·라이선스)**: codexclaw는 **공개 OSS 프로젝트**로 출시한다(GitHub public). 라이선스는 **MIT** — 가장 단순·관대하며, nanoclaw를 비롯한 미니멀 OSS 호스트의 표준이다. 사유: §1·§2의 "개인이 소유·감사 가능한 미니멀 에이전트" 가치, §13의 "외부 PR로 추가 채널 어댑터" 지표, nanoclaw를 레퍼런스로 삼는 문맥 전체가 OSS를 전제로 일관됨. v0.7까지의 "Internal" 분류는 v0.1 초안의 자리표시자였으며 v0.8에서 정정. 정책: 외부 기여자가 보는 문서임을 전제로 PRD·README·기여 가이드를 작성한다(과한 사내 약어·맥락 회피).
   - **README 필수 문구** (출시 전 의무):
     - 상표 디스클레이머: *"codexclaw is an independent open-source client for Codex app-server. It is not affiliated with or endorsed by OpenAI."* (또는 동등한 한국어 표현)
@@ -524,7 +525,7 @@ SLACK_SIGNING_SECRET=...
 | 3 | Thread resume이 실시간 복구가 아님 | 끊긴 동안의 delta 재수신 불가, 진행 중 turn에 재구독 불가 | "스트림 복구 = nice-to-have, 상태 복구 = must-have"로 설계(§10) → R4 |
 | 4 | Cancel이 깔끔하지 않음 | tool 프로세스 잔존, thread busy 고착, 다음 turn 거부 | cancel 실패 시 thread를 quarantine 상태로 표시, 사용자에게 `/new` 권장 → R6 |
 | 5 | Diff 이벤트가 채널 UX에 안 맞음 | diff 너무 김, chunk 순서 조립 필요, 메시지 길이 제한 초과 | 채널 출력은 전체 diff가 아니라 (파일명, 변경 라인 수, 요약, artifact/file 링크)로 |
-| 6 | "사용자당 활성 thread 1개"가 팀 Slack에서 꼬임 | user_key vs channel_key 모호, A가 시작한 thread에 B가 이어 말하기 가능 여부 | M0는 CLI/Telegram 개인 모드만 검증. 팀 모드는 §7.3·D5 참조 |
+| 6 | "사용자당 활성 thread 1개"가 팀/커뮤니티 채널에서 꼬임 | user_key vs channel_key 모호, A가 시작한 thread에 B가 이어 말하기 가능 여부 | M0는 CLI/Telegram 개인 모드만 검증. Discord v1 stable은 user_key 개인 모드만 지원하고, 공유 팀 모드는 §7.3·D5 참조 |
 
 ### 16.3 산출물
 

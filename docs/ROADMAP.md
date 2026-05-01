@@ -1,0 +1,221 @@
+# codexclaw Roadmap
+
+Last updated: 2026-05-01
+Source of truth: `docs/seed/PRD.md` v1.1
+
+This roadmap translates the PRD milestones into execution phases. It keeps the PRD's core constraint intact: codexclaw is a thin Bun + TypeScript host above `codex app-server`, not a reimplementation of Codex.
+
+## Current Status
+
+M0 scaffold is in place:
+
+- Bun + TypeScript project initialized.
+- Local `codex app-server` startup helper exists.
+- JSON-RPC WebSocket client spike exists.
+- CLI REPL spike exists.
+- Approval demo spike exists.
+- Generated app-server schemas are checked in.
+- Project subagents and planning/review workflows are configured.
+
+M0 is not complete until `docs/M0-findings.md` records real observed behavior for initialize, thread, turn streaming, approval, cancel, and reconnect.
+
+## Release Gates
+
+| Gate | Required Before | Criteria |
+| --- | --- | --- |
+| M0 Gate | M1 Core | All PRD §16.4 success criteria pass, and no PRD §16.5 hard failure remains unresolved. |
+| Schema Gate | M1 Core | Generated schemas match the pinned Codex CLI/app-server version. M1 cannot proceed from planning into implementation while app-server schemas come from an ambient, unpinned `codex` binary. |
+| Security Gate | Channel releases | Channel credentials, user identity, approval routing, token handling, and AGENTS.md trust boundary are reviewed. |
+| GA Gate | v1.0 | Install path, docs, container guidance, CLI, Telegram stable channel, Discord personal mode, Scheduler, Pointer Store, Approval Bridge, and thread lifecycle commands are usable by a fresh clone user. |
+
+## M0 - App-Server Runtime Spike
+
+Goal: prove that `codex app-server` can be treated as a reliable external agent runtime.
+
+Status: in progress.
+
+Deliverables:
+
+- Direct WebSocket initialization.
+- Thread creation and resume.
+- Turn start and streamed response handling.
+- Diff/tool event observation.
+- Approval approve/reject round trip.
+- Cancel/timeout behavior notes.
+- Reconnect behavior notes.
+- Minimal pointer-store validation notes.
+- `docs/M0-findings.md` updated with exact method names, event names, payload shapes, and decisions.
+
+Exit criteria:
+
+- `initialize` succeeds.
+- `thread/start` succeeds.
+- `turn/start` produces streamed output.
+- Approval approve/reject round trip succeeds.
+- Reconnect allows the same thread to continue without duplicate turn execution.
+- Timeout/cancel is tested and the same thread can accept a safe subsequent turn.
+- If cancel/timeout cannot be controlled externally, M0 fails and the product scope must be redesigned per PRD §16.5. Quarantine is a mitigation for non-deterministic edge cases, not a substitute for M0 success.
+
+## M1 - Core Host Runtime
+
+Goal: build the reusable host layer above the verified app-server protocol.
+
+Planned scope:
+
+- Router and inbox normalization.
+- Pointer Store backed by SQLite.
+- User-key and label based thread routing.
+- Thread Manager slash commands:
+  - `/new [label]`
+  - `/threads`
+  - `/switch <label>`
+  - `/branch [label]`
+  - `/archive <label>`
+- Three-way Approval Bridge:
+  - Approve
+  - Reject
+  - Modify as reject plus follow-up turn
+- Approval safety rules:
+  - approval timeout auto-reject
+  - separate Modify input timeout
+  - one active approval per thread, with additional approvals queued
+- Reconnect handling with thread state recovery.
+- Turn concurrency guard for one active turn per thread.
+- Structured stderr logging.
+- Mock app-server tests for router, pointer store, approval, and reconnect paths.
+
+Non-goals:
+
+- Telegram or Discord production adapter behavior.
+- Scheduler.
+- Team/shared Discord or Slack thread semantics.
+- Codex Cloud integration.
+
+Exit criteria:
+
+- CLI can route through the same core runtime used by future channels.
+- Approval timeout, Modify timeout, and one-active-approval queueing are validated in the core runtime before Telegram or Discord adapters build on it.
+- Conversation bodies, tool calls, diffs, and approval histories are not persisted by codexclaw.
+- Pointer Store persists only PRD-approved domain data.
+- `bun run typecheck` and focused tests pass.
+
+## M2 - Telegram Channel
+
+Goal: ship the first stable remote personal channel.
+
+Planned scope:
+
+- Telegram inbound adapter.
+- Telegram outbound message formatting.
+- Inline approval UX with Approve, Reject, Modify.
+- Modify reply flow.
+- New thread suggestion after 4 hours of inactivity.
+- Daily throttle and 7-day suppress behavior for branch suggestions.
+- Telegram secret/token handling guidance.
+- Channel message to pending approval mapping.
+
+Exit criteria:
+
+- A single user can operate codexclaw through Telegram without CLI fallback.
+- Approval timeout and Modify timeout behave as defined in the PRD.
+- Telegram credentials never reach Codex app-server or spawned tool environments.
+
+## M3 - Discord And Scheduler
+
+Goal: add Discord personal mode and safe automation.
+
+Planned scope:
+
+- Discord personal-mode stable adapter keyed by `user_key`.
+- Discord message component approval UX.
+- Discord modal flow for Modify.
+- Scheduler with required controls:
+  - retry
+  - timeout
+  - dedupe with concurrency 1
+  - 5 consecutive failures disable the task
+- Task-bound named thread support.
+- `prefs` key-value support for whitelisted user preferences:
+  - `lang`
+  - `tone`
+  - `verbosity`
+
+Non-goals:
+
+- Shared team/community thread semantics. Shared threads belong to v1.x experimental, not v1.0 GA.
+- Budget controls.
+- Multi-tenant SaaS behavior.
+
+Exit criteria:
+
+- Discord operates in stable personal mode only. Messages in shared Discord channels still route by the sender's `user_key`.
+- Discord approval buttons and Modify modal complete the approve, reject, modify, timeout, and one-active-approval flows defined by the core Approval Bridge.
+- Discord interaction signatures are verified before any command, approval response, or modal submission is trusted.
+- Retry uses bounded backoff and reports final failure.
+- Task timeout attempts turn cancel and records the result.
+- Scheduler cannot stack duplicate runs for the same task.
+- Failed scheduled tasks are visible to the user and stop after the failure threshold.
+
+## M4 - Hardening And Deployment
+
+Goal: make the project safe and easy to operate on a user-owned host.
+
+Planned scope:
+
+- WSS and reverse-proxy deployment guide.
+- Container reference setup.
+- Token file permission checks and guidance.
+- Boot-time `thread/list` synchronization.
+- Drift detection with lightweight `thread/read`.
+- Status handling for active, archived, missing, and quarantined threads.
+- JSON-line logging conventions.
+- Raspberry Pi 4 / 8GB smoke path.
+- `codexclaw.sh` one-command install script.
+- README and operations docs for public OSS release.
+
+Exit criteria:
+
+- Fresh clone to first remote-channel response is documented and achievable in 15 minutes on a supported Mac/Linux host.
+- Non-loopback deployments document TLS and token requirements.
+- Thread drift and missing thread states produce clear user-facing recovery guidance.
+
+## v1.0 GA
+
+Goal: publish a stable personal codexclaw release.
+
+Required capabilities:
+
+- CLI/REPL for debugging.
+- Telegram stable channel.
+- Discord stable personal mode.
+- Scheduler.
+- Pointer Store.
+- Approval Bridge.
+- Thread lifecycle commands.
+- WSS/container deployment guidance.
+- MIT license and public OSS documentation.
+
+Success indicators:
+
+- Core host code remains near the PRD target of 2,000 LoC.
+- Runtime dependencies stay intentionally small.
+- External contributors can add a channel adapter without touching core routing internals.
+
+## v1.x Experimental
+
+Candidate scope after v1.0:
+
+- Slack personal mode and shared team thread mode behind an explicit experimental flag.
+- WhatsApp, Matrix, iMessage relay, or Email adapters as skills.
+- More complete stream recovery if app-server protocol support allows it.
+- Schema-diff automation in CI.
+
+## v2 Candidates
+
+Out-of-scope for v1, but worth revisiting after real usage:
+
+- Codex Cloud or other managed remote runtime integration.
+- Topic-change based thread suggestion.
+- Usage and budget controls based on observed operating data.
+- Multi-tenant hosting model.
+- GUI dashboard, if channel-only operations prove insufficient.
