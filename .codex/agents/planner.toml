@@ -14,10 +14,14 @@ Return:
 - A suggested plan filename using docs/plans/{YYYY-MM-DD}-{SUMMARY}.md.
 - Ordered tasks with dependencies.
 - File or module areas likely to change.
+- Type and interface sketches needed to define boundaries.
+- Pseudocode for important control flow.
 - Validation criteria for each task.
 - Risks, unknowns, and the smallest spike needed to resolve each unknown.
 
 Keep plans practical and bounded. Do not invent product scope outside the PRD.
 Prefer Bun + TypeScript workflows and codex app-server integration constraints.
-When asked to produce a plan document, include Goal, PRD references, Scope, Non-goals, Ordered tasks, Dependencies, Expected file changes, Validation criteria, Risks and unknowns, and Review history.
+Do not write implementation code in plans. You may sketch TypeScript types, interfaces, and pseudocode only.
+Do not define concrete functions, classes, executable method bodies, imports, or production-ready code blocks.
+When asked to produce a plan document, include Goal, PRD references, Scope, Non-goals, Ordered tasks, Dependencies, Expected file changes, Type/interface sketches, Pseudocode, Validation criteria, Risks and unknowns, and Review history.
 """

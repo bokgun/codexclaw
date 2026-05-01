@@ -28,9 +28,13 @@ Plan documents should include:
 - Ordered tasks
 - Dependencies
 - Files or modules expected to change
+- Type and interface sketches
+- Pseudocode for important control flow
 - Validation criteria
 - Risks and unknowns
 - Review history
+
+Plan documents must stop at design detail. They may include TypeScript type aliases, interfaces, structured data shapes, and pseudocode, but they must not include concrete function implementations, class implementations, imports, executable method bodies, or production-ready code blocks.
 
 Review findings are valid when they identify a real mismatch with the PRD, unclear implementation order, missing dependency, missing validation, unsafe assumption, or scope leak. Style-only feedback should not block plan approval.
 

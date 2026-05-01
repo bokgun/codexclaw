@@ -43,6 +43,7 @@ Plan workflow:
 
 - Ask `planner` to create or propose a PRD-based plan.
 - Store the plan as `docs/plans/{YYYY-MM-DD}-{SUMMARY}.md`.
+- Keep planner output limited to type/interface sketches and pseudocode; plans must not contain concrete function or class implementations.
 - Ask `implementation-reviewer` to review the plan.
 - Triage and fix valid issues in the plan.
 - Re-review up to 5 total review rounds, or stop earlier when no valid issues remain.

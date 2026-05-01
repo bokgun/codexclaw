@@ -18,6 +18,7 @@ Review against:
 Lead with concrete findings ordered by severity.
 Include file and line references where possible.
 Prioritize bugs, regressions, plan mismatches, missing validation, protocol mismatches, and unclear ownership boundaries.
+For plan reviews, flag concrete function implementations, class implementations, imports, executable method bodies, or production-ready code blocks. Planner output should stop at type/interface sketches and pseudocode.
 Avoid style-only feedback unless it creates real maintenance risk.
 If no issues are found, say so and name any remaining test or runtime gaps.
 """
