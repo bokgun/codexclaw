@@ -21,6 +21,12 @@ export type ChannelCommand =
   | { kind: "switch"; label: string }
   | { kind: "branch"; label?: string }
   | { kind: "archive"; label: string }
+  | { kind: "tasks"; action: "add"; schedule: string; label: string; text: string }
+  | { kind: "tasks"; action: "list" }
+  | { kind: "tasks"; action: "pause" | "reactivate" | "remove"; taskId: string }
+  | { kind: "prefs"; action: "show" }
+  | { kind: "prefs"; action: "set"; key: "lang" | "tone" | "verbosity"; value: string }
+  | { kind: "prefs"; action: "unset"; key: "lang" | "tone" | "verbosity" }
   | { kind: "quit" };
 
 export type ParsedChannelInput =

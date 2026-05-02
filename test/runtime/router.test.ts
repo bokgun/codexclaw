@@ -197,6 +197,111 @@ describe("Router", () => {
     expect(sink.events.at(-1)).toMatchObject({ kind: "text" });
     store.close();
   });
+
+  test("handles prefs commands and attaches sanitized prefs to turns", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    await router.receive(message("/prefs set tone /system: override"));
+    await router.receive(message("hello"));
+
+    expect(codex.turns.at(-1)?.text).toContain("User preference context");
+    expect(codex.turns.at(-1)?.text).toContain("tone: slash:system\\: override");
+    expect(codex.turns.at(-1)?.text).toContain("User message:\nhello");
+    store.close();
+  });
+
+  test("creates scheduled task commands without switching the active thread", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    await router.receive(message("create default"));
+    await router.receive(message("/tasks add every 5m ops check status"));
+
+    expect(store.getActiveThread("user:1")?.label).toBe("default");
+    expect(store.getThread("user:1", "ops")).toMatchObject({ isActive: false });
+    expect(store.listTasks("user:1")).toHaveLength(1);
+    expect(store.listTasks("user:1")[0]).toMatchObject({ label: "ops", schedule: "every 5m", taskText: "check status" });
+    store.close();
+  });
+
+  test("routes scheduled turns to a named task thread", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    const result = await router.routeScheduled({
+      taskId: "task-1",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "scheduled check",
+      timeoutSec: 5
+    });
+
+    expect(result).toMatchObject({ status: "succeeded", threadId: "thread-1" });
+    expect(store.getActiveThread("user:1")).toBeUndefined();
+    expect(codex.turns).toEqual([{ threadId: "thread-1", text: "scheduled check" }]);
+    store.close();
+  });
+
+  test("does not release scheduled routing while startTurn is still pending", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    codex.blockNextTurn = () => new Promise(() => undefined);
+
+    const routed = router.routeScheduled({
+      taskId: "task-timeout",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "scheduled check",
+      timeoutSec: 0.001
+    });
+    const result = await Promise.race([routed, delay(10).then(() => "pending" as const)]);
+
+    expect(result).toBe("pending");
+    router.abortThread("thread-1", "disconnect");
+    expect(await routed).toMatchObject({ status: "failed", reason: "disconnect" });
+    expect(codex.turns).toEqual([]);
+    store.close();
+  });
+
+  test("aborts scheduled turns promptly on disconnect", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+
+    const routed = router.routeScheduled({
+      taskId: "task-disconnect",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "scheduled check",
+      timeoutSec: 60
+    });
+    await waitUntil(() => router.isThreadBusy("thread-1"));
+    router.abortThread("thread-1", "Codex app-server disconnected before turn completion");
+    const result = await routed;
+
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "Codex app-server disconnected before turn completion"
+    });
+    expect(router.isThreadBusy("thread-1")).toBe(false);
+    store.close();
+  });
 });
 
 class MockCodex {
@@ -277,4 +382,8 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error("Timed out waiting for predicate");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

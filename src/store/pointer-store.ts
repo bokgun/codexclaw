@@ -2,6 +2,11 @@ import { Database } from "bun:sqlite";
 import type {
   ChannelName,
   PendingApprovalRecord,
+  PrefKey,
+  PrefRecord,
+  TaskDedupePolicy,
+  TaskRecord,
+  TaskRunStatus,
   ThreadId,
   ThreadLabel,
   ThreadRecord,
@@ -10,7 +15,7 @@ import type {
   UserKey
 } from "../runtime/types.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 interface ThreadRow {
   user_key: string;
@@ -37,6 +42,32 @@ interface PendingApprovalRow {
   created_at: string;
 }
 
+interface TaskRow {
+  task_id: string;
+  user_key: string;
+  thread_label: string;
+  channel: ChannelName;
+  schedule: string;
+  task_instruction: string;
+  enabled: number;
+  retry: number;
+  timeout_sec: number;
+  dedupe_policy: TaskDedupePolicy;
+  last_run_at: string | null;
+  last_run_status: TaskRunStatus | null;
+  consecutive_failures: number;
+  next_run_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PrefRow {
+  user_key: string;
+  pref_key: PrefKey;
+  pref_value: string;
+  updated_at: string;
+}
+
 interface StoreCountRow {
   count: number;
 }
@@ -61,6 +92,19 @@ export interface SavePendingApprovalInput {
   approvalKind: string;
   channel: ChannelName;
   expiresAt: TimestampIso;
+}
+
+export interface CreateTaskInput {
+  taskId?: string;
+  userKey: UserKey;
+  label: ThreadLabel;
+  channel: ChannelName;
+  schedule: string;
+  taskText: string;
+  retry?: number;
+  timeoutSec?: number;
+  dedupePolicy?: TaskDedupePolicy;
+  nextRunAt: TimestampIso;
 }
 
 export class PointerStore {
@@ -249,6 +293,140 @@ export class PointerStore {
     return rows.map(pendingApprovalFromRow);
   }
 
+  createTask(input: CreateTaskInput): TaskRecord {
+    const now = new Date().toISOString();
+    const taskId = input.taskId ?? `task-${crypto.randomUUID()}`;
+    this.db
+      .query(
+        `insert into tasks (
+          task_id, user_key, thread_label, channel, schedule, task_instruction, enabled,
+          retry, timeout_sec, dedupe_policy, consecutive_failures, next_run_at, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, ?, ?, ?)`
+      )
+      .run(
+        taskId,
+        input.userKey,
+        input.label,
+        input.channel,
+        input.schedule,
+        input.taskText,
+        input.retry ?? 0,
+        input.timeoutSec ?? 300,
+        input.dedupePolicy ?? "concurrency_1",
+        input.nextRunAt,
+        now,
+        now
+      );
+    return this.requireTask(taskId);
+  }
+
+  listTasks(userKey: UserKey): TaskRecord[] {
+    return this.db
+      .query<TaskRow, [string]>(`select * from tasks where user_key = ? order by created_at asc`)
+      .all(userKey)
+      .map(taskFromRow);
+  }
+
+  getTask(taskId: string): TaskRecord | undefined {
+    const row = this.db.query<TaskRow, [string]>(`select * from tasks where task_id = ?`).get(taskId);
+    return row ? taskFromRow(row) : undefined;
+  }
+
+  listDueTasks(channel: ChannelName, now = new Date().toISOString()): TaskRecord[] {
+    return this.db
+      .query<TaskRow, [string, string]>(
+        `select * from tasks where enabled = 1 and channel = ? and next_run_at <= ? order by next_run_at asc, created_at asc`
+      )
+      .all(channel, now)
+      .map(taskFromRow);
+  }
+
+  setTaskEnabled(taskId: string, enabled: boolean): TaskRecord {
+    this.db
+      .query(`update tasks set enabled = ?, updated_at = ? where task_id = ?`)
+      .run(enabled ? 1 : 0, new Date().toISOString(), taskId);
+    return this.requireTask(taskId);
+  }
+
+  deleteTask(taskId: string): boolean {
+    return this.db.query(`delete from tasks where task_id = ?`).run(taskId).changes > 0;
+  }
+
+  markTaskRunStart(taskId: string, nextRunAt: TimestampIso, runAt = new Date().toISOString()): TaskRecord {
+    this.db
+      .query(`update tasks set last_run_at = ?, next_run_at = ?, updated_at = ? where task_id = ?`)
+      .run(runAt, nextRunAt, new Date().toISOString(), taskId);
+    return this.requireTask(taskId);
+  }
+
+  markTaskRunSuccess(taskId: string, nextRunAt: TimestampIso, runAt = new Date().toISOString()): TaskRecord {
+    this.db
+      .query(
+        `update tasks
+         set last_run_at = ?, last_run_status = 'succeeded', consecutive_failures = 0,
+             next_run_at = ?, updated_at = ?
+         where task_id = ?`
+      )
+      .run(runAt, nextRunAt, new Date().toISOString(), taskId);
+    return this.requireTask(taskId);
+  }
+
+  markTaskRunFailure(
+    taskId: string,
+    status: Exclude<TaskRunStatus, "succeeded" | "skipped_dedupe" | "skipped_channel">,
+    nextRunAt: TimestampIso,
+    failureThreshold: number,
+    runAt = new Date().toISOString()
+  ): TaskRecord {
+    return this.transaction(() => {
+      const task = this.requireTask(taskId);
+      const failures = task.consecutiveFailures + 1;
+      this.db
+        .query(
+          `update tasks
+           set last_run_at = ?, last_run_status = ?, consecutive_failures = ?,
+               enabled = case when ? >= ? then 0 else enabled end,
+               next_run_at = ?, updated_at = ?
+           where task_id = ?`
+        )
+        .run(runAt, status, failures, failures, failureThreshold, nextRunAt, new Date().toISOString(), taskId);
+      return this.requireTask(taskId);
+    });
+  }
+
+  markTaskSkipped(taskId: string, status: "skipped_dedupe" | "skipped_channel", nextRunAt: TimestampIso): TaskRecord {
+    this.db
+      .query(`update tasks set last_run_status = ?, next_run_at = ?, updated_at = ? where task_id = ?`)
+      .run(status, nextRunAt, new Date().toISOString(), taskId);
+    return this.requireTask(taskId);
+  }
+
+  listPrefs(userKey: UserKey): PrefRecord[] {
+    return this.db
+      .query<PrefRow, [string]>(`select * from prefs where user_key = ? order by pref_key asc`)
+      .all(userKey)
+      .map(prefFromRow);
+  }
+
+  setPref(userKey: UserKey, key: PrefKey, value: string): PrefRecord {
+    const normalized = normalizePrefValue(value);
+    if (!normalized) throw new Error("Preference value must not be empty.");
+    const now = new Date().toISOString();
+    this.db
+      .query(
+        `insert into prefs (user_key, pref_key, pref_value, updated_at) values (?, ?, ?, ?)
+         on conflict(user_key, pref_key) do update set
+           pref_value = excluded.pref_value,
+           updated_at = excluded.updated_at`
+      )
+      .run(userKey, key, normalized, now);
+    return this.requirePref(userKey, key);
+  }
+
+  unsetPref(userKey: UserKey, key: PrefKey): boolean {
+    return this.db.query(`delete from prefs where user_key = ? and pref_key = ?`).run(userKey, key).changes > 0;
+  }
+
   schemaColumns(tableName: "threads" | "pending_approvals" | "tasks" | "prefs"): string[] {
     return this.db
       .query<{ name: string }, []>(`pragma table_info(${tableName})`)
@@ -310,11 +488,21 @@ export class PointerStore {
           task_id text primary key,
           user_key text not null,
           thread_label text not null,
+          channel text not null default 'cli' check(channel in ('cli', 'telegram', 'discord')),
           schedule text not null,
+          task_instruction text not null default '',
           enabled integer not null default 1 check(enabled in (0, 1)),
+          retry integer not null default 0 check(retry >= 0 and retry <= 10),
+          timeout_sec integer not null default 300 check(timeout_sec >= 1 and timeout_sec <= 86400),
+          dedupe_policy text not null default 'concurrency_1' check(dedupe_policy in ('concurrency_1')),
+          last_run_at text,
+          last_run_status text check(last_run_status in ('succeeded', 'failed', 'skipped_dedupe', 'timed_out', 'skipped_channel')),
+          consecutive_failures integer not null default 0 check(consecutive_failures >= 0),
+          next_run_at text not null default '1970-01-01T00:00:00.000Z',
           created_at text not null,
           updated_at text not null
         );
+        create index if not exists tasks_due_idx on tasks(channel, enabled, next_run_at);
 
         create table if not exists prefs (
           user_key text not null,
@@ -329,6 +517,21 @@ export class PointerStore {
       if (!threadColumns.includes("last_branch_suggested_at")) {
         this.db.exec(`alter table threads add column last_branch_suggested_at text`);
       }
+
+      const taskColumns = this.schemaColumns("tasks");
+      const addTaskColumn = (name: string, definition: string): void => {
+        if (!taskColumns.includes(name)) this.db.exec(`alter table tasks add column ${definition}`);
+      };
+      addTaskColumn("channel", `channel text not null default 'cli' check(channel in ('cli', 'telegram', 'discord'))`);
+      addTaskColumn("task_instruction", `task_instruction text not null default ''`);
+      addTaskColumn("retry", `retry integer not null default 0 check(retry >= 0 and retry <= 10)`);
+      addTaskColumn("timeout_sec", `timeout_sec integer not null default 300 check(timeout_sec >= 1 and timeout_sec <= 86400)`);
+      addTaskColumn("dedupe_policy", `dedupe_policy text not null default 'concurrency_1' check(dedupe_policy in ('concurrency_1'))`);
+      addTaskColumn("last_run_at", `last_run_at text`);
+      addTaskColumn("last_run_status", `last_run_status text check(last_run_status in ('succeeded', 'failed', 'skipped_dedupe', 'timed_out', 'skipped_channel'))`);
+      addTaskColumn("consecutive_failures", `consecutive_failures integer not null default 0 check(consecutive_failures >= 0)`);
+      addTaskColumn("next_run_at", `next_run_at text not null default '1970-01-01T00:00:00.000Z'`);
+      this.db.exec(`create index if not exists tasks_due_idx on tasks(channel, enabled, next_run_at)`);
 
       this.db
         .query(`insert into schema_migrations (version, applied_at) values (?, ?)`)
@@ -346,6 +549,18 @@ export class PointerStore {
     const approval = this.getPendingApproval(channelMsgId);
     if (!approval) throw new Error(`Unknown pending approval '${channelMsgId}'`);
     return approval;
+  }
+
+  private requireTask(taskId: string): TaskRecord {
+    const task = this.getTask(taskId);
+    if (!task) throw new Error(`Unknown task '${taskId}'`);
+    return task;
+  }
+
+  private requirePref(userKey: UserKey, key: PrefKey): PrefRecord {
+    const pref = this.listPrefs(userKey).find((record) => record.key === key);
+    if (!pref) throw new Error(`Unknown preference '${key}' for ${userKey}`);
+    return pref;
   }
 
   private clearActive(userKey: UserKey): void {
@@ -399,6 +614,40 @@ function pendingApprovalFromRow(row: PendingApprovalRow): PendingApprovalRecord 
     expiresAt: row.expires_at,
     createdAt: row.created_at
   };
+}
+
+function taskFromRow(row: TaskRow): TaskRecord {
+  return {
+    taskId: row.task_id,
+    userKey: row.user_key,
+    label: row.thread_label,
+    channel: row.channel,
+    schedule: row.schedule,
+    taskText: row.task_instruction,
+    enabled: row.enabled === 1,
+    retry: row.retry,
+    timeoutSec: row.timeout_sec,
+    dedupePolicy: row.dedupe_policy,
+    lastRunAt: row.last_run_at ?? undefined,
+    lastRunStatus: row.last_run_status ?? undefined,
+    consecutiveFailures: row.consecutive_failures,
+    nextRunAt: row.next_run_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function prefFromRow(row: PrefRow): PrefRecord {
+  return {
+    userKey: row.user_key,
+    key: row.pref_key,
+    value: row.pref_value,
+    updatedAt: row.updated_at
+  };
+}
+
+function normalizePrefValue(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200);
 }
 
 export function countActiveThreads(store: PointerStore, userKey: UserKey): number {

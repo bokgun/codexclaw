@@ -127,3 +127,34 @@ export type RuntimeEvent =
   | { kind: "tool_event"; threadId?: ThreadId; turnId?: TurnId; itemId?: string; status?: string }
   | { kind: "approval_requested"; requestId: number | string; method: string; params: JsonValue }
   | { kind: "unknown"; method: string; params?: JsonValue };
+
+export type TaskDedupePolicy = "concurrency_1";
+export type TaskRunStatus = "succeeded" | "failed" | "skipped_dedupe" | "timed_out" | "skipped_channel";
+
+export interface TaskRecord {
+  taskId: string;
+  userKey: UserKey;
+  label: ThreadLabel;
+  channel: ChannelName;
+  schedule: string;
+  taskText: string;
+  enabled: boolean;
+  retry: number;
+  timeoutSec: number;
+  dedupePolicy: TaskDedupePolicy;
+  lastRunAt?: TimestampIso;
+  lastRunStatus?: TaskRunStatus;
+  consecutiveFailures: number;
+  nextRunAt: TimestampIso;
+  createdAt: TimestampIso;
+  updatedAt: TimestampIso;
+}
+
+export type PrefKey = "lang" | "tone" | "verbosity";
+
+export interface PrefRecord {
+  userKey: UserKey;
+  key: PrefKey;
+  value: string;
+  updatedAt: TimestampIso;
+}

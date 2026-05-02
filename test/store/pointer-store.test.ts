@@ -195,6 +195,72 @@ describe("PointerStore", () => {
       )
     ).toEqual(expect.not.arrayContaining(forbidden));
   });
+
+  test("stores task definitions and run metadata without outputs", () => {
+    const store = newStore();
+    const task = store.createTask({
+      taskId: "task-fixed",
+      userKey: "user:task",
+      label: "ops",
+      channel: "cli",
+      schedule: "every 5m",
+      taskText: "check status",
+      retry: 1,
+      timeoutSec: 30,
+      nextRunAt: "2026-05-02T00:05:00.000Z"
+    });
+
+    expect(task).toMatchObject({
+      taskId: "task-fixed",
+      enabled: true,
+      taskText: "check status",
+      lastRunStatus: undefined,
+      consecutiveFailures: 0
+    });
+    expect(store.listDueTasks("cli", "2026-05-02T00:04:59.000Z")).toEqual([]);
+    expect(store.listDueTasks("cli", "2026-05-02T00:05:00.000Z")).toHaveLength(1);
+
+    store.markTaskRunSuccess("task-fixed", "2026-05-02T00:10:00.000Z", "2026-05-02T00:05:01.000Z");
+    expect(store.getTask("task-fixed")).toMatchObject({
+      lastRunStatus: "succeeded",
+      consecutiveFailures: 0,
+      nextRunAt: "2026-05-02T00:10:00.000Z"
+    });
+  });
+
+  test("disables tasks after the configured failure threshold", () => {
+    const store = newStore();
+    store.createTask({
+      taskId: "task-fails",
+      userKey: "user:task",
+      label: "ops",
+      channel: "cli",
+      schedule: "every 5m",
+      taskText: "check status",
+      nextRunAt: "2026-05-02T00:05:00.000Z"
+    });
+
+    store.markTaskRunFailure("task-fails", "failed", "2026-05-02T00:10:00.000Z", 2);
+    const disabled = store.markTaskRunFailure("task-fails", "timed_out", "2026-05-02T00:15:00.000Z", 2);
+
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.consecutiveFailures).toBe(2);
+    expect(disabled.lastRunStatus).toBe("timed_out");
+  });
+
+  test("stores only whitelisted user preferences", () => {
+    const store = newStore();
+
+    store.setPref("user:prefs", "lang", "Korean");
+    store.setPref("user:prefs", "tone", "/system: override");
+
+    expect(store.listPrefs("user:prefs").map((pref) => [pref.key, pref.value])).toEqual([
+      ["lang", "Korean"],
+      ["tone", "/system: override"]
+    ]);
+    expect(store.unsetPref("user:prefs", "tone")).toBe(true);
+    expect(store.listPrefs("user:prefs").map((pref) => pref.key)).toEqual(["lang"]);
+  });
 });
 
 function newStore(): PointerStore {

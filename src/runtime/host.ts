@@ -4,13 +4,14 @@ import { dirname } from "node:path";
 import { ApprovalBridge } from "../approval/approval-bridge.js";
 import { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CodexWsClient } from "../codex/ws-client.js";
-import { getCodexConnectionConfig } from "../config/env.js";
+import { getCodexConnectionConfig, getSchedulerConfig } from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { ThreadManager } from "../thread/thread-manager.js";
 import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
 import { EventDispatcher } from "./events.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
 import { Router } from "./router.js";
+import { SchedulerCoordinator, type SchedulerOptions } from "./scheduler.js";
 import type { BranchSuggestionResponse, ChannelName, ChannelSink, InboundMessage, OutboundEvent, UserKey } from "./types.js";
 
 export interface HostRuntimeOptions {
@@ -20,6 +21,7 @@ export interface HostRuntimeOptions {
   dbPath?: string;
   branchSuggestions?: BranchSuggestionOptions | false;
   approvalModifyTtlMs?: number;
+  scheduler?: false | Partial<Omit<SchedulerOptions, "store" | "router" | "channel" | "logger" | "channelSink">>;
 }
 
 type BranchSuggestionChannel = ChannelAdapter & {
@@ -32,15 +34,18 @@ export class HostRuntime {
   private readonly logger: RuntimeLogger;
   private readonly branchSuggestionOptions: BranchSuggestionOptions | false;
   private readonly approvalModifyTtlMs: number | undefined;
+  private readonly schedulerOptions: Exclude<HostRuntimeOptions["scheduler"], undefined>;
   private codex!: CodexRuntimeClient;
   private router!: Router;
   private approvals!: ApprovalBridge;
   private branchSuggestions?: BranchSuggestionCoordinator;
+  private scheduler?: SchedulerCoordinator;
   private approvalExpiry?: ReturnType<typeof setInterval>;
   private reconnecting = false;
   private stopping = false;
 
-  constructor(options: HostRuntimeOptions = {}) {
+  constructor(private readonly hostOptions: HostRuntimeOptions = {}) {
+    const options = hostOptions;
     const dbPath = options.dbPath ?? ".codexclaw/codexclaw.sqlite";
     this.logger = options.logger ?? createJsonLineLogger({ minLevel: "warn" });
     this.channel = options.channel ?? createCliChannelAdapter({ input: process.stdin, logger: this.logger });
@@ -48,6 +53,7 @@ export class HostRuntime {
     this.store = options.store ?? createPointerStore(dbPath);
     this.branchSuggestionOptions = options.branchSuggestions ?? false;
     this.approvalModifyTtlMs = options.approvalModifyTtlMs;
+    this.schedulerOptions = options.scheduler ?? getSchedulerConfig();
   }
 
   async start(): Promise<void> {
@@ -69,6 +75,11 @@ export class HostRuntime {
     const threadTargets = new Map<string, { userKey: UserKey; channel: ChannelName; channelThreadKey?: string }>();
     const threads = new ThreadManager(this.store, this.codex);
     this.router = new Router(threads, this.codex, sink, {
+      store: this.store,
+      channel: this.channel.name,
+      minScheduleIntervalMs: this.schedulerOptions === false ? undefined : this.schedulerOptions.minScheduleIntervalMs,
+      defaultTaskRetry: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultRetry,
+      defaultTaskTimeoutSec: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultTimeoutSec,
       bindThread: (thread, message) => {
         const target = {
           userKey: message.userKey,
@@ -95,16 +106,31 @@ export class HostRuntime {
     });
     this.codex.onClose((error) => {
       this.router.setConnected(false);
+      this.scheduler?.stop();
       if (this.stopping) return;
       this.logger.warn("codex_disconnected", { error: error?.message });
       this.approvals.invalidateAll("codex_disconnected");
       this.quarantineBusyThreads();
       void this.reconnect();
     });
+
+    this.scheduler?.stop();
+    if (this.schedulerOptions && this.schedulerOptions.enabled !== false) {
+      this.scheduler = new SchedulerCoordinator({
+        ...this.schedulerOptions,
+        store: this.store,
+        router: this.router,
+        channel: this.channel.name,
+        logger: this.logger,
+        channelSink: sink
+      });
+      this.scheduler.start();
+    }
   }
 
   close(): void {
     this.stopping = true;
+    this.scheduler?.stop();
     if (this.approvalExpiry) clearInterval(this.approvalExpiry);
     this.codex?.close();
     this.store.close();

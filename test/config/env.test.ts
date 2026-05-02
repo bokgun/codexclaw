@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { getTelegramConfig, redactTelegramSecrets } from "../../src/config/env.js";
+import { getDiscordConfig, getTelegramConfig, redactDiscordSecrets, redactTelegramSecrets } from "../../src/config/env.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -31,5 +31,57 @@ describe("Telegram config", () => {
       "https://api.telegram.org/bot[telegram-bot-token]/sendMessage failed"
     );
     expect(redactTelegramSecrets("token 123:secret leaked", "123:secret")).toBe("token [telegram-bot-token] leaked");
+  });
+});
+
+describe("Discord config", () => {
+  test("requires bot token, application id, public key, and allowed users", () => {
+    process.env.CODEXCLAW_DISCORD_BOT_TOKEN = "";
+    process.env.CODEXCLAW_DISCORD_APPLICATION_ID = "123";
+    process.env.CODEXCLAW_DISCORD_PUBLIC_KEY = "a".repeat(64);
+    process.env.CODEXCLAW_DISCORD_ALLOWED_USER_IDS = "42";
+    expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DISCORD_BOT_TOKEN");
+
+    process.env.CODEXCLAW_DISCORD_BOT_TOKEN = "secret-token";
+    process.env.CODEXCLAW_DISCORD_APPLICATION_ID = "not-a-snowflake";
+    expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DISCORD_APPLICATION_ID");
+
+    process.env.CODEXCLAW_DISCORD_APPLICATION_ID = "123";
+    process.env.CODEXCLAW_DISCORD_PUBLIC_KEY = "not-hex";
+    expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DISCORD_PUBLIC_KEY");
+
+    process.env.CODEXCLAW_DISCORD_PUBLIC_KEY = "a".repeat(64);
+    process.env.CODEXCLAW_DISCORD_ALLOWED_USER_IDS = "42, not-a-user";
+    expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DISCORD_ALLOWED_USER_IDS");
+
+    process.env.CODEXCLAW_DISCORD_ALLOWED_USER_IDS = "42, 43";
+    process.env.CODEXCLAW_DISCORD_ALLOWED_GUILD_IDS = "900";
+    const config = getDiscordConfig();
+    expect(config.allowedUserIds).toEqual(["42", "43"]);
+    expect(config.allowedGuildIds).toEqual(["900"]);
+    expect(config.interactionsPath).toBe("/discord/interactions");
+  });
+
+  test("redacts Discord bot tokens in API errors", () => {
+    expect(redactDiscordSecrets("Authorization failed for Bot secret-token", "secret-token")).toBe(
+      "Authorization failed for Bot [discord-bot-token]"
+    );
+    expect(redactDiscordSecrets("token secret-token leaked", "secret-token")).toBe("token [discord-bot-token] leaked");
+  });
+
+  test("validates Discord Gateway URL before sending bot tokens", () => {
+    process.env.CODEXCLAW_DISCORD_BOT_TOKEN = "secret-token";
+    process.env.CODEXCLAW_DISCORD_APPLICATION_ID = "123";
+    process.env.CODEXCLAW_DISCORD_PUBLIC_KEY = "a".repeat(64);
+    process.env.CODEXCLAW_DISCORD_ALLOWED_USER_IDS = "42";
+
+    process.env.CODEXCLAW_DISCORD_GATEWAY_URL = "ws://example.com/gateway";
+    expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DISCORD_GATEWAY_URL must use wss://");
+
+    process.env.CODEXCLAW_DISCORD_GATEWAY_URL = "wss://user@example.com/gateway";
+    expect(() => getDiscordConfig()).toThrow("must not include credentials");
+
+    process.env.CODEXCLAW_DISCORD_GATEWAY_URL = "ws://127.0.0.1:9000/gateway";
+    expect(getDiscordConfig().gatewayUrl).toBe("ws://127.0.0.1:9000/gateway");
   });
 });

@@ -86,9 +86,52 @@ M2 Telegram supports private chats only. Webhook signing and rate-limit
 hardening are out of scope for the long-polling path; callback data carries only
 opaque adapter keys and action names.
 
+## Discord Runtime
+
+Discord v1 runs in personal mode only. DMs and bot mentions in guild channels
+route by sender identity (`discord:<user-id>`); guild channel IDs are only
+reply targets and are not shared team thread ownership. Signed HTTP
+interactions are the only executable command, approval, and branch-button path.
+Gateway text is prompt text only, and text beginning with `/` is rejected with a
+notice to use Discord slash commands.
+
+```bash
+CODEXCLAW_DISCORD_BOT_TOKEN=bot-token
+CODEXCLAW_DISCORD_APPLICATION_ID=123456789012345678
+CODEXCLAW_DISCORD_PUBLIC_KEY=64_hex_chars
+CODEXCLAW_DISCORD_ALLOWED_USER_IDS=123456789012345678
+bun run discord
+```
+
+Required Discord environment:
+
+- `CODEXCLAW_DISCORD_BOT_TOKEN`: bot token used only by the host adapter.
+- `CODEXCLAW_DISCORD_APPLICATION_ID`: application ID used for slash-command and mention routing.
+- `CODEXCLAW_DISCORD_PUBLIC_KEY`: Discord interaction Ed25519 public key.
+- `CODEXCLAW_DISCORD_ALLOWED_USER_IDS`: comma-separated Discord user IDs.
+
+Optional Discord environment:
+
+- `CODEXCLAW_DISCORD_ALLOWED_GUILD_IDS`: comma-separated guild allowlist. Empty allows DMs and any guild from an allowed user.
+- `CODEXCLAW_DISCORD_INTERACTIONS_HOST`: interaction receiver host, default `127.0.0.1`.
+- `CODEXCLAW_DISCORD_INTERACTIONS_PORT`: interaction receiver port, default `8787`.
+- `CODEXCLAW_DISCORD_INTERACTIONS_PATH`: interaction receiver path, default `/discord/interactions`.
+- `CODEXCLAW_DISCORD_DELTA_FLUSH_MS`: streaming coalescing window, default `750`.
+- `CODEXCLAW_DISCORD_MODIFY_TIMEOUT_MS`: core Modify follow-up timeout, default `600000`.
+- `CODEXCLAW_DISCORD_API_BASE_URL`: Discord API base URL for tests.
+- `CODEXCLAW_DISCORD_ALLOW_ALL_USERS_FOR_LOCAL_DEV=true`: local-only escape hatch for an empty allowlist.
+
+Credential and webhook assumptions: the interaction endpoint must be exposed to
+Discord by your deployment or tunnel and Discord signatures are verified before
+JSON parsing. Bot tokens and authorization headers are redacted from adapter
+errors and are not passed to Codex app-server or spawned tool environments.
+Discord API rate-limit retry/backoff is not implemented in this skeleton.
+
 codexclaw stores only its own routing data: thread pointers, labels, statuses,
-pending approval mappings, schedules, and prefs placeholders. Codex rollout
-storage remains the source of truth for conversation bodies, tool calls, diffs,
-and approval histories.
+pending approval mappings, task definitions, schedules, run metadata, and prefs
+placeholders. Scheduled task instructions are stored as task definition data and
+should be treated as sensitive user content. Codex rollout storage remains the
+source of truth for conversation bodies, tool calls, diffs, and approval
+histories.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the PRD-based project roadmap.

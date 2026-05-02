@@ -111,6 +111,28 @@ export class ThreadManager {
     return thread;
   }
 
+  async resolveTaskThread(userKey: UserKey, label: ThreadLabel): Promise<ThreadRecord> {
+    const normalized = normalizeLabel(label);
+    const existing = this.store.getThread(userKey, normalized);
+    if (existing) {
+      if (existing.status !== "active") {
+        throw new RoutingError(`Thread '${normalized}' is ${existing.status}; scheduled tasks require an active label.`, "thread_not_routable");
+      }
+      await this.resumeThread(existing);
+      return existing;
+    }
+
+    const threadId = await this.codex.startThread({});
+    return this.store.upsertThread({
+      userKey,
+      label: normalized,
+      threadId,
+      status: "active",
+      isDefault: normalized === "default",
+      makeActive: false
+    });
+  }
+
   markRouted(record: ThreadRecord): ThreadRecord {
     return this.store.markRouted(record.userKey, record.label);
   }
