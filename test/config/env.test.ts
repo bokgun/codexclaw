@@ -12,7 +12,8 @@ afterEach(() => {
 
 describe("Telegram config", () => {
   test("requires a bot token and allowlisted numeric user ids", () => {
-    delete process.env.CODEXCLAW_TELEGRAM_BOT_TOKEN;
+    process.env.CODEXCLAW_TELEGRAM_BOT_TOKEN = "";
+    process.env.CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS = "";
     expect(() => getTelegramConfig()).toThrow("CODEXCLAW_TELEGRAM_BOT_TOKEN");
 
     process.env.CODEXCLAW_TELEGRAM_BOT_TOKEN = "123:secret";

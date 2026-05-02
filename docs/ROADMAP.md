@@ -184,6 +184,16 @@ Planned scope:
 - Boot-time `thread/list` synchronization.
 - Drift detection with lightweight `thread/read`.
 - Status handling for active, archived, missing, and quarantined threads.
+- Codex app-server skills discovery:
+  - verify `skills/list` against the pinned app-server schema;
+  - document returned fields and failure modes;
+  - expose read-only skill listing with clear `codex` scope labels.
+- Host skill registry design:
+  - distinguish Codex agent skills from codexclaw host/channel skills;
+  - define metadata for name, scope, description, and enabled state;
+  - keep host skills from bypassing Codex sandbox or approval policy.
+- Unified skills documentation explaining Codex skills, host skills, and their
+  separate security boundaries.
 - JSON-line logging conventions.
 - Raspberry Pi 4 / 8GB smoke path.
 - `codexclaw.sh` one-command install script.
@@ -194,6 +204,8 @@ Exit criteria:
 - Fresh clone to first remote-channel response is documented and achievable in 15 minutes on a supported Mac/Linux host.
 - Non-loopback deployments document TLS and token requirements.
 - Thread drift and missing thread states produce clear user-facing recovery guidance.
+- Users can inspect available Codex and host skills with source/scope labels,
+  without granting new execution privileges.
 
 ## v1.0 GA
 
@@ -223,6 +235,8 @@ Candidate scope after v1.0:
 
 - Slack personal mode and shared team thread mode behind an explicit experimental flag.
 - WhatsApp, Matrix, iMessage relay, or Email adapters as skills.
+- Skill selection UX such as `/skill use <name>` after M4 validates discovery
+  and boundaries.
 - More complete stream recovery if app-server protocol support allows it.
 - Schema-diff automation in CI.
 

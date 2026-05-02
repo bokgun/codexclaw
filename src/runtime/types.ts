@@ -79,6 +79,7 @@ export type OutboundEvent =
 
 export interface ChannelSink {
   send(event: OutboundEvent): Promise<{ channelMessageId?: string } | void>;
+  flushDeltas?(): Promise<void>;
 }
 
 export interface ThreadRecord {

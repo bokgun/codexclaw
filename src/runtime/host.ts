@@ -229,6 +229,10 @@ function toInboundMessage(message: NormalizedMessage): InboundMessage {
 class ChannelAdapterSink implements ChannelSink {
   constructor(private readonly channel: ChannelAdapter) {}
 
+  async flushDeltas(): Promise<void> {
+    await this.channel.flushDeltas?.();
+  }
+
   async send(event: OutboundEvent): Promise<{ channelMessageId?: string } | void> {
     if (event.kind === "approval_prompt") {
       return this.channel.requestApproval({

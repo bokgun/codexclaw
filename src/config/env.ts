@@ -80,7 +80,7 @@ export function getTelegramConfig(): TelegramConfig {
     apiBaseUrl,
     pollingTimeoutSeconds: parseBoundedInteger("CODEXCLAW_TELEGRAM_POLLING_TIMEOUT_SECONDS", 30, 1, 50),
     modifyTimeoutMs: parseBoundedInteger("CODEXCLAW_TELEGRAM_MODIFY_TIMEOUT_MS", 10 * 60 * 1000, 1_000, 30 * 60 * 1000),
-    deltaFlushMs: parseBoundedInteger("CODEXCLAW_TELEGRAM_DELTA_FLUSH_MS", 750, 0, 10_000)
+    deltaFlushMs: parseBoundedInteger("CODEXCLAW_TELEGRAM_DELTA_FLUSH_MS", 10_000, 0, 30_000)
   };
 }
 

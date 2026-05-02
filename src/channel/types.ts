@@ -119,5 +119,6 @@ export interface ChannelAdapter {
   requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalPrompt>;
   requestBranchSuggestion?(request: ChannelBranchSuggestionRequest): Promise<ChannelSendResult>;
   acknowledge?(request: ChannelAcknowledgeRequest): Promise<void>;
+  flushDeltas?(): Promise<void>;
   close?(): Promise<void> | void;
 }

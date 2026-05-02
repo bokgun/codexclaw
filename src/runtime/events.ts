@@ -37,7 +37,10 @@ export class EventDispatcher {
     const eventThreadId = "threadId" in event ? event.threadId : undefined;
     if (eventThreadId) {
       const target = this.threadTargets.get(eventThreadId);
-      const text = summarizeEvent(event);
+      if (target?.channel === "telegram" && isTerminalTurnEvent(event)) {
+        await this.channel.flushDeltas?.();
+      }
+      const text = target ? summarizeEvent(event, target.channel) : undefined;
       if (target && text) {
         await this.channel.send({
           kind: "status",
@@ -62,10 +65,16 @@ export class EventDispatcher {
   }
 }
 
-function summarizeEvent(event: RuntimeEvent): string | undefined {
+function isTerminalTurnEvent(event: RuntimeEvent): boolean {
+  return event.kind === "turn_completed" || event.kind === "turn_failed";
+}
+
+function summarizeEvent(event: RuntimeEvent, channel: ChannelName): string | undefined {
+  if (channel === "telegram" && (event.kind === "turn_started" || event.kind === "turn_completed")) return undefined;
   if (event.kind === "turn_started") return "Turn started.";
   if (event.kind === "turn_completed") return "Turn completed.";
   if (event.kind === "turn_failed") return "Turn failed.";
+  if (channel === "telegram" && (event.kind === "diff_updated" || event.kind === "tool_event")) return undefined;
   if (event.kind === "diff_updated") return `Diff updated${event.size === undefined ? "." : ` (${event.size} bytes).`}`;
   if (event.kind === "tool_event") return `Tool event${event.status ? `: ${event.status}` : "."}`;
   return undefined;
