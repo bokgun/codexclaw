@@ -101,12 +101,21 @@ general job runner.
    - Dependencies: task 1.
    - Add a small Discord API client interface around Bun `fetch` for sending,
      editing, and acknowledging interactions.
-   - Add an HTTP interaction receiver boundary for commands, components, and
-     modals. It must verify Ed25519 signatures over the raw request body before
-     parsing JSON.
+   - Add a concrete Bun HTTP interaction receiver for commands, components, and
+     modals, with configurable host, port, and path.
+   - Preserve the raw request body bytes for Ed25519 verification, and verify
+     `X-Signature-Ed25519` plus `X-Signature-Timestamp` before parsing JSON.
+   - Respond to Discord `PING` interactions and acknowledge commands/components
+     within Discord's interaction response window. Long-running work should use
+     deferred or follow-up responses through the Discord API client.
+   - Start and stop the HTTP receiver from the Discord runtime lifecycle, and
+     close it during HostRuntime shutdown before closing the channel queues.
    - Add a Gateway client boundary only for inbound message events if M3 chooses
      Gateway for DM/mention text. Gateway events must not be accepted as command,
      approval, component, modal, or branch-suggestion decisions.
+   - HTTP interactions and Gateway text may coexist in one Discord adapter:
+     signed HTTP interactions are the only executable command/approval path,
+     while Gateway events are prompt text only.
    - Keep network-facing HTTP concerns separate from routing, approval, and
      scheduler logic.
    - Provide an in-memory/test receiver so adapter tests do not require network
@@ -131,9 +140,10 @@ general job runner.
    - Reject or ignore unmentioned guild chatter by default.
    - Reject unauthorized users or guilds before emitting router messages.
    - Treat Gateway/DM/mention text as normal Codex prompt text only.
-   - Do not pass text that starts with `/` from Discord Gateway messages into
-     executable Router command handling. Reply with a bounded notice directing
-     the user to the signed Discord slash-command UI.
+   - Normalize DM text or strip the bot mention first, then reject normalized
+     text that starts with `/` before it can enter Router command handling.
+     Reply with a bounded notice directing the user to the signed Discord
+     slash-command UI.
    - Allow executable Discord `/tasks`, `/prefs`, and thread lifecycle commands
      only through signed HTTP interactions.
    - Preserve enough reply/message IDs for Modify, branch suggestions, and
@@ -216,7 +226,10 @@ general job runner.
       - `/tasks remove <id>`
     - Validate cron or interval syntax before saving.
     - Require an explicit thread label or create a task-owned label using the
-      existing Thread Manager path.
+      new non-active Thread Manager path.
+    - Add a Thread Manager API for task-owned labels that creates or resolves an
+      active routable Codex thread without switching the user's active
+      interactive label.
     - Reject schedules that would violate configured minimum interval.
     - Keep command parsing channel-neutral so CLI, Telegram, and Discord share
       the same behavior.
@@ -231,6 +244,14 @@ general job runner.
     - Dependencies: tasks 9 and 10, existing `Router` and `TurnQueue`.
    - Add a scheduler loop that finds due enabled tasks and injects synthetic
      `InboundMessage` values into Router.
+   - Add a scheduler-specific Router entrypoint that returns a structured
+     `ScheduledRouteResult` instead of swallowing routing errors into user-facing
+     channel text.
+   - The route result must include task id, resolved thread id, turn id when
+     available, terminal status, and failure reason when available.
+   - Treat `turn_completed` as success, `turn_failed` as failure, routing errors
+     as failure, timeout as timed out, and disconnect/quarantine as failure with
+     an explicit ambiguous or disconnected reason.
    - Use `channel = task.channel`, but in M3 only execute tasks whose channel
      matches the current HostRuntime channel adapter.
    - Reject or mark skipped-visible tasks for other channels rather than trying
@@ -260,6 +281,9 @@ general job runner.
    - Add a route option or scheduler-specific entry boundary that selects a
      named thread label without changing the user's active interactive thread
      unexpectedly.
+   - Do not reuse the interactive active-thread path for scheduled turns.
+     Scheduled routing must resolve the task label directly and must not call
+     `setActiveThread` as a side effect.
 
 13. Prefs store APIs and command parsing
     - Dependencies: existing `prefs` table and command parser.
@@ -428,6 +452,14 @@ interface ScheduledRouteSketch {
   timeoutSec: number;
 }
 
+interface ScheduledRouteResultSketch {
+  taskId: string;
+  threadId?: string;
+  turnId?: string;
+  status: "succeeded" | "failed" | "timed_out" | "disconnected" | "quarantined";
+  reason?: string;
+}
+
 interface TaskRunStateSketch {
   taskId: string;
   attempt: number;
@@ -449,6 +481,10 @@ interface PrefRecordSketch {
 Discord interaction verification:
 
 ```text
+on Discord runtime start:
+  start Bun HTTP receiver on configured host, port, and path
+  preserve raw body bytes for every interaction request
+
 on raw interaction request:
   read timestamp, signature, and raw body
   verify signature with configured Discord public key
@@ -467,6 +503,10 @@ on raw interaction request:
 
 on Gateway interaction-like event:
   ignore for commands, approvals, modals, and branch suggestions in M3
+
+on Discord runtime shutdown:
+  stop accepting HTTP requests
+  drain or reject in-flight interaction work with bounded timeout
 ```
 
 Discord inbound routing:
@@ -475,16 +515,15 @@ Discord inbound routing:
 on Discord message:
   ignore bot-authored messages
   if user or guild is not allowed, reject before routing
-  if text starts with "/":
-    send bounded notice to use signed Discord slash commands
-    stop without Router command execution
   if DM:
-    use full text
+    normalized_text = full text
   else if guild message mentions the bot:
-    strip only the bot mention wrapper
-    use the remaining text
+    normalized_text = text after stripping only the bot mention wrapper
   else:
     ignore without routing
+  if normalized_text starts with "/":
+    send bounded notice to use signed Discord slash commands
+    stop without Router command execution
   emit NormalizedMessage with userKey discord:<user-id>
   set channelThreadKey to discord:<channel-id>
 ```
@@ -500,18 +539,18 @@ every scheduler tick:
     if task has active run:
       record skipped_dedupe and continue
     start run attempt 1
-    inject synthetic inbound message to Router with task userKey and label
-    wait for success, failure, disconnect, or timeout signal
-    if timeout:
+    call Router.routeScheduled with task userKey, label, prompt, and timeout
+    wait for ScheduledRouteResult
+    if result.status is timed_out:
       request turn cancel
       mark failed/timed_out
-    if failure and attempts remain:
+    if result.status is failed, disconnected, or quarantined and attempts remain:
       wait bounded backoff and retry
-    if final failure:
+    if final failure status:
       increment consecutive failures
       notify configured channel once
       disable task when consecutive failures reaches threshold
-    if success:
+    if result.status is succeeded:
       reset consecutive failures and record last_run_status succeeded
 ```
 
@@ -521,9 +560,11 @@ Scheduled route target:
 route scheduled message:
   resolve configured thread label for user
   if label is archived, missing, or quarantined:
-    fail task visibly
+    return ScheduledRouteResult failed/quarantined
   enqueue turn through a scheduler route boundary
-  do not switch the user's active interactive label unless the user explicitly configured that behavior
+  do not switch the user's active interactive label
+  return ScheduledRouteResult succeeded only for turn_completed
+  return ScheduledRouteResult failed for turn_failed or routing errors
   enforce task timeout around the active run
 ```
 
@@ -543,7 +584,7 @@ Task command handling:
 ```text
 on /tasks add schedule label prompt:
   validate schedule and label
-  ensure label exists or create task-owned thread through Thread Manager policy
+  ensure label exists or create task-owned thread through non-active Thread Manager policy
   save task with retry, timeout, dedupe defaults
   report task id and next run hint
 
@@ -555,10 +596,14 @@ on /tasks reactivate id:
 
 - Invalid Discord config fails fast and redacts secrets.
 - Discord interaction signatures are verified before JSON parsing or routing.
+- Discord runtime starts and stops a concrete Bun HTTP interaction receiver with
+  configurable host, port, and path.
 - Gateway-originated events are not trusted for commands, approvals, modals, or
   branch suggestions in M3.
 - Discord Gateway/DM text that begins with `/` does not execute Router commands;
   executable Discord commands enter only through signed HTTP interactions.
+- Discord guild mention text that normalizes to a slash command also does not
+  execute Router commands.
 - Discord personal mode always routes by sender `discord:<user-id>`, including
   in shared guild channels.
 - Unmentioned guild messages and unauthorized users/guilds do not route.
@@ -570,7 +615,8 @@ on /tasks reactivate id:
 - Discord outbound streaming is chunked, coalesced, flushed before prompts, and
   not persisted by codexclaw.
 - Scheduler stores only task metadata and run status, not Codex outputs.
-- Scheduler uses the same Router path as normal messages.
+- Scheduler uses a Router-owned scheduled route boundary that shares normal turn
+  execution behavior but returns structured terminal status.
 - Scheduler tasks run only when `task.channel` matches the current single
   HostRuntime channel.
 - Scheduler enforces retry, timeout, dedupe with concurrency 1, final failure
@@ -580,6 +626,8 @@ on /tasks reactivate id:
   unless explicitly configured.
 - Scheduled task routing does not unexpectedly change the user's active
   interactive thread.
+- Task-owned label creation does not switch the user's active interactive
+  thread.
 - Prefs are limited to `lang`, `tone`, and `verbosity`.
 - Prefs values are sanitized and cannot alter sandbox, approval policy, model
   routing, channel authorization, task controls, or AGENTS.md.
@@ -658,3 +706,8 @@ on /tasks reactivate id:
   Discord Gateway slash-like text; plan updated so Discord text can route only
   as prompt text, while executable Discord commands require signed HTTP
   interactions.
+- 2026-05-02: Implementation review round 3 found missing scheduler route
+  result semantics, underspecified live Discord HTTP receiver lifecycle, and
+  task label creation that could switch the active interactive thread. Plan
+  updated with a structured scheduled route result, concrete Bun HTTP receiver
+  lifecycle requirements, and a non-active task-owned thread path.
