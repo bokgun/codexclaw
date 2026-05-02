@@ -172,6 +172,49 @@ Exit criteria:
 - Scheduler cannot stack duplicate runs for the same task.
 - Failed scheduled tasks are visible to the user and stop after the failure threshold.
 
+## M3.5 - Knowledge Wiki
+
+Goal: add an inspectable knowledge layer for fork-specific agent customization
+after the stable personal channels and scheduler exist, before deployment
+hardening freezes the operating model.
+
+Planned scope:
+
+- Markdown wiki workspace for agent-maintained project and user knowledge.
+- Source-first ingest model:
+  - raw sources remain untouched;
+  - compiled wiki pages are generated or revised as separate Markdown artifacts;
+  - source references are preserved where practical.
+- Wiki conventions document for page structure, linking, ingest, query, and lint.
+- User-steered commands or workflows to:
+  - ingest selected files or notes;
+  - summarize selected conversation knowledge into the wiki only when requested;
+  - query the compiled wiki;
+  - lint for stale claims, missing links, contradictions, and orphan pages.
+- Clear storage boundary: the wiki may store human-reviewable knowledge, but
+  must not persist conversation bodies, tool calls, diffs, approval histories,
+  or hidden rollout replicas outside Codex.
+- Fork customization examples showing how agent profiles and channel behavior
+  can refer to the wiki without bypassing Codex sandbox or approval policy.
+
+Non-goals:
+
+- Vector database or opaque embedding-first memory.
+- Automatic capture of every conversation.
+- Reimplementation of Codex rollout storage, editing, patching, or approval
+  enforcement.
+
+Exit criteria:
+
+- A fresh fork can add raw notes and compile them into linked Markdown wiki
+  pages with a documented workflow.
+- The user can inspect and edit all persistent wiki knowledge with normal file
+  tools and git.
+- Wiki operations respect the PRD storage boundary and do not save Codex-owned
+  histories outside Codex rollout storage.
+- M4 hardening docs can describe the wiki as an optional, auditable host-layer
+  customization feature.
+
 ## M4 - Hardening And Deployment
 
 Goal: make the project safe and easy to operate on a user-owned host.

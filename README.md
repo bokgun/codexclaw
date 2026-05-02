@@ -4,9 +4,32 @@
 
 codexclaw is a minimal host and client layer for `codex app-server`. It routes messages from channels such as a CLI, Telegram, or Discord into Codex threads and streams the results back.
 
+It is also intended to be a forkable seed for building customized
+Codex-powered agents. codexclaw provides adapters, routing, lightweight memory,
+schedules, and preferences while delegating reasoning, tool execution, patches,
+approvals, and rollout storage to Codex.
+
 codexclaw is an independent open-source client for Codex app-server. It is not affiliated with or endorsed by OpenAI.
 
 Inspired by [nanoclaw](https://github.com/qwibitai/nanoclaw). The container-isolation and channel-adapter patterns originate there; codexclaw adapts them for the Codex ecosystem.
+
+## Vision
+
+codexclaw should stay a thin, customizable shell around Codex: easy to fork,
+easy to adapt to a person's or team's preferred agent workflow, and careful not
+to reimplement Codex's core responsibilities.
+
+Customize agent profiles, channel adapters, routing behavior, lightweight
+memory, and local workflows. Leave editing, patching, model routing, sandbox
+decisions, approval enforcement, conversation bodies, tool calls, diffs, and
+approval histories to Codex.
+
+The roadmap also reserves a post-M3, pre-M4 Knowledge Wiki milestone inspired
+by the LLM-maintained wiki pattern: raw sources stay auditable, while the agent
+compiles selected project knowledge into linked Markdown pages that humans can
+inspect, edit, version, and review.
+
+See [VISION.md](VISION.md) for the project vision.
 
 ## Local CLI Runtime
 
