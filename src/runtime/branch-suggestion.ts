@@ -113,7 +113,7 @@ export class BranchSuggestionCoordinator {
       await route({
         ...held.message,
         channelMessageId: `${held.message.channelMessageId}:branch-new`,
-        text: "/new"
+        text: "/thread new"
       });
       await route(held.message);
       return;

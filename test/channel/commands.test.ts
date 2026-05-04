@@ -10,9 +10,21 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/archive old").command).toEqual({ kind: "archive", label: "old" });
   });
 
+  test("parses explicit thread namespace commands", () => {
+    expect(parseSlashCommand("/thread list").command).toEqual({ kind: "threads" });
+    expect(parseSlashCommand("/thread ls").command).toEqual({ kind: "threads" });
+    expect(parseSlashCommand("/thread new work").command).toEqual({ kind: "new", label: "work" });
+    expect(parseSlashCommand("/thread new").command).toEqual({ kind: "new", label: undefined });
+    expect(parseSlashCommand("/thread switch default").command).toEqual({ kind: "switch", label: "default" });
+    expect(parseSlashCommand("/thread branch fix.1").command).toEqual({ kind: "branch", label: "fix.1" });
+    expect(parseSlashCommand("/thread archive old").command).toEqual({ kind: "archive", label: "old" });
+  });
+
   test("rejects invalid labels and unknown commands", () => {
     expect(parseSlashCommand("/switch ../bad").error).toBe("invalid thread label");
+    expect(parseSlashCommand("/thread switch ../bad").error).toBe("invalid thread label");
     expect(parseSlashCommand("/archive").error).toBe("usage: /archive <label>");
+    expect(parseSlashCommand("/thread nope").error).toBe("usage: /thread list|new|switch|branch|archive");
     expect(parseSlashCommand("/nope").error).toBe("unknown command: /nope");
   });
 

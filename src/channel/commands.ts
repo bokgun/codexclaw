@@ -14,6 +14,10 @@ export function parseSlashCommand(text: string): ParseCommandResult {
   const [rawCommand = "", ...args] = trimmed.split(/\s+/);
   const command = rawCommand.slice(1).toLowerCase();
 
+  if (command === "thread" || command === "threads") {
+    return parseThreadCommand(rawCommand, args);
+  }
+
   if (command === "new") {
     const label = args[0];
     if (args.length > 1) return { error: "usage: /new [label]" };
@@ -124,6 +128,51 @@ export function parseSlashCommand(text: string): ParseCommandResult {
   }
 
   return { error: `unknown command: ${rawCommand}` };
+}
+
+function parseThreadCommand(rawCommand: string, args: string[]): ParseCommandResult {
+  const action = args[0];
+  const rest = args.slice(1);
+
+  if (!action) {
+    if (rawCommand === "/threads") return { command: { kind: "threads" } };
+    return { error: "usage: /thread list|new|switch|branch|archive" };
+  }
+
+  if (action === "list" || action === "ls") {
+    if (rest.length > 0) return { error: "usage: /thread list" };
+    return { command: { kind: "threads" } };
+  }
+
+  if (action === "new") {
+    const label = rest[0];
+    if (rest.length > 1) return { error: "usage: /thread new [label]" };
+    if (label && !isValidThreadLabel(label)) return { error: "invalid thread label" };
+    return { command: { kind: "new", label } };
+  }
+
+  if (action === "switch") {
+    const label = rest[0];
+    if (rest.length !== 1 || !label) return { error: "usage: /thread switch <label>" };
+    if (!isValidThreadLabel(label)) return { error: "invalid thread label" };
+    return { command: { kind: "switch", label } };
+  }
+
+  if (action === "branch") {
+    const label = rest[0];
+    if (rest.length > 1) return { error: "usage: /thread branch [label]" };
+    if (label && !isValidThreadLabel(label)) return { error: "invalid thread label" };
+    return { command: { kind: "branch", label } };
+  }
+
+  if (action === "archive") {
+    const label = rest[0];
+    if (rest.length !== 1 || !label) return { error: "usage: /thread archive <label>" };
+    if (!isValidThreadLabel(label)) return { error: "invalid thread label" };
+    return { command: { kind: "archive", label } };
+  }
+
+  return { error: "usage: /thread list|new|switch|branch|archive" };
 }
 
 function readPrefKey(value: string | undefined): "lang" | "tone" | "verbosity" | undefined {

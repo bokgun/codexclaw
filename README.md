@@ -39,6 +39,7 @@ runtime:
 ```sh
 bun install
 cp .env.example .env
+# Edit CODEXCLAW_WORKSPACE_ROOT in .env if Codex should work in another project.
 bun run start:codex
 bun run cli
 ```
@@ -52,7 +53,16 @@ bun run schema:verify
 Required environment:
 
 - `CODEXCLAW_CODEX_WS`: Codex app-server WebSocket URL.
-- `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `.codexclaw/codex.token`, which `bun run start:codex` creates automatically for local development.
+- `CODEXCLAW_WORKSPACE_ROOT`: project directory where Codex should run. Defaults to the directory where codexclaw is started.
+- `CODEXCLAW_STATE_DIR`: codexclaw-owned state directory. Defaults to `<workspace>/.codexclaw`.
+- `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `<state-dir>/codex.token`, which `bun run start:codex` creates automatically for local development.
+- `CODEXCLAW_DB`: SQLite database path for codexclaw pointers, approvals, tasks, and prefs. Defaults to `<state-dir>/codexclaw.sqlite`.
+
+`CODEXCLAW_WORKSPACE_ROOT` and `CODEXCLAW_STATE_DIR` are intentionally
+separate. The workspace is the project Codex can inspect and edit; the state
+directory stores codexclaw metadata such as thread pointers and pending approval
+mappings. A future installer can ask for these paths interactively and write the
+same settings to `.env`.
 
 The M1 CLI path uses the shared runtime router, SQLite pointer store, thread
 manager, approval bridge, and one-active-turn queue that future Telegram and
@@ -87,6 +97,7 @@ Wiki artifacts are either `project_public` or `user_private`. Private pages are
 visible only to the owning `user_key` during query and context attachment. Wiki
 context is attached as data-only text and sanitized like prefs; it cannot alter
 Codex sandbox, approval, model routing, or AGENTS.md policy.
+Relative wiki paths are resolved from `CODEXCLAW_WORKSPACE_ROOT`.
 
 ## Telegram Runtime
 
@@ -123,10 +134,13 @@ reply targets and are not shared team thread ownership. Signed HTTP
 interactions are the only executable command, approval, and branch-button path.
 Gateway text is prompt text by default. Text beginning with `/` is rejected with
 a notice to use registered Discord slash commands, while the local personal-bot
-shortcut `:threads`/`:switch work` is converted to the shared `/threads` and
-`/switch work` router commands. Approval and branch-suggestion buttons also
-accept local text fallbacks such as `1`, `2`, and `3 <instruction>` so personal
-bots can approve without a public interaction endpoint.
+shortcut `:threads` or `:thread switch work` is converted to the shared
+`/threads` or `/thread switch work` router commands. New docs prefer the
+explicit `/thread ...` command namespace so future `/project ...` commands can
+manage multi-workspace routing without overloading `/new` or `/switch`.
+Approval and branch-suggestion buttons also accept local text fallbacks such as
+`1`, `2`, and `3 <instruction>` so personal bots can approve without a public
+interaction endpoint.
 
 ```bash
 CODEXCLAW_DISCORD_BOT_TOKEN=bot-token

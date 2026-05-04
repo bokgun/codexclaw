@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { ApprovalBridge } from "../approval/approval-bridge.js";
 import { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CodexWsClient } from "../codex/ws-client.js";
-import { getCodexConnectionConfig, getSchedulerConfig, getWikiConfig } from "../config/env.js";
+import { getCodexConnectionConfig, getRuntimePathConfig, getSchedulerConfig, getWikiConfig } from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { ThreadManager } from "../thread/thread-manager.js";
 import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
@@ -48,7 +48,8 @@ export class HostRuntime {
 
   constructor(private readonly hostOptions: HostRuntimeOptions = {}) {
     const options = hostOptions;
-    const dbPath = options.dbPath ?? ".codexclaw/codexclaw.sqlite";
+    const runtimePaths = getRuntimePathConfig();
+    const dbPath = options.dbPath ?? runtimePaths.dbPath;
     this.logger = options.logger ?? createJsonLineLogger({ minLevel: "warn" });
     this.channel = options.channel ?? createCliChannelAdapter({ input: process.stdin, logger: this.logger });
     if (!options.store) mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });

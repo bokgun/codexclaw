@@ -240,6 +240,8 @@ Planned scope:
 - JSON-line logging conventions.
 - Raspberry Pi 4 / 8GB smoke path.
 - `codexclaw.sh` one-command install script.
+- Interactive install prompts for `CODEXCLAW_WORKSPACE_ROOT`,
+  `CODEXCLAW_STATE_DIR`, channel credentials, and safe defaults.
 - README and operations docs for public OSS release.
 
 Exit criteria:

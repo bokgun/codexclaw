@@ -1,6 +1,12 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+
+export interface RuntimePathConfig {
+  workspaceRoot: string;
+  stateDir: string;
+  dbPath: string;
+}
 
 export interface CodexConnectionConfig {
   wsUrl: string;
@@ -73,9 +79,10 @@ export function loadDotenv(path = ".env"): void {
 export function getCodexConnectionConfig(): CodexConnectionConfig {
   loadDotenv();
 
+  const paths = getRuntimePathConfig();
   const wsUrl = process.env.CODEXCLAW_CODEX_WS ?? "ws://127.0.0.1:4500";
-  const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE ?? ".codexclaw/codex.token";
-  const resolvedTokenFile = resolve(tokenFile);
+  const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE?.trim();
+  const resolvedTokenFile = tokenFile ? resolveAgainst(paths.workspaceRoot, tokenFile) : resolve(paths.stateDir, "codex.token");
 
   validateWsUrl(wsUrl);
   ensureTokenFile(resolvedTokenFile);
@@ -83,6 +90,22 @@ export function getCodexConnectionConfig(): CodexConnectionConfig {
   return {
     wsUrl,
     tokenFile: resolvedTokenFile
+  };
+}
+
+export function getRuntimePathConfig(): RuntimePathConfig {
+  loadDotenv();
+
+  const workspaceRoot = resolveWorkspaceRoot(process.env.CODEXCLAW_WORKSPACE_ROOT?.trim() || process.cwd());
+  const stateDirInput = process.env.CODEXCLAW_STATE_DIR?.trim();
+  const stateDir = stateDirInput ? resolveAgainst(workspaceRoot, stateDirInput) : resolve(workspaceRoot, ".codexclaw");
+  const dbPathInput = process.env.CODEXCLAW_DB?.trim();
+  const dbPath = dbPathInput ? resolveAgainst(workspaceRoot, dbPathInput) : resolve(stateDir, "codexclaw.sqlite");
+
+  return {
+    workspaceRoot,
+    stateDir,
+    dbPath
   };
 }
 
@@ -188,10 +211,13 @@ export function getSchedulerConfig(): SchedulerConfig {
 export function getWikiConfig(): WikiConfig {
   loadDotenv();
 
+  const paths = getRuntimePathConfig();
   return {
     enabled: parseBoolean(process.env.CODEXCLAW_WIKI_ENABLED),
-    wikiRoot: process.env.CODEXCLAW_WIKI_ROOT?.trim() || "wiki",
-    allowedSourceRoots: parseCsv(process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS ?? "."),
+    wikiRoot: resolveAgainst(paths.workspaceRoot, process.env.CODEXCLAW_WIKI_ROOT?.trim() || "wiki"),
+    allowedSourceRoots: parseCsv(process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS ?? ".").map((root) =>
+      resolveAgainst(paths.workspaceRoot, root)
+    ),
     maxSourceBytes: parseBoundedInteger("CODEXCLAW_WIKI_MAX_SOURCE_BYTES", 128 * 1024, 1, 2 * 1024 * 1024),
     maxQueryResults: parseBoundedInteger("CODEXCLAW_WIKI_MAX_QUERY_RESULTS", 5, 1, 20),
     maxExcerptChars: parseBoundedInteger("CODEXCLAW_WIKI_MAX_EXCERPT_CHARS", 500, 80, 5_000)
@@ -235,6 +261,18 @@ function validateTokenFile(tokenFile: string): void {
   if ((updated.mode & 0o077) !== 0) {
     throw new Error(`Token file must not be group/world accessible: ${tokenFile}`);
   }
+}
+
+function resolveWorkspaceRoot(input: string): string {
+  const resolved = resolve(input);
+  if (!existsSync(resolved)) throw new Error(`CODEXCLAW_WORKSPACE_ROOT must be a directory: ${resolved}`);
+  const stat = statSync(resolved);
+  if (!stat.isDirectory()) throw new Error(`CODEXCLAW_WORKSPACE_ROOT must be a directory: ${resolved}`);
+  return realpathSync(resolved);
+}
+
+function resolveAgainst(base: string, input: string): string {
+  return resolve(base, input);
 }
 
 function validateWsUrl(wsUrl: string): void {

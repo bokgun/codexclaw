@@ -43,7 +43,7 @@ describe("BranchSuggestionCoordinator", () => {
     store.close();
   });
 
-  test("new-thread choice routes /new before the held message", async () => {
+  test("new-thread choice routes /thread new before the held message", async () => {
     const store = createPointerStore();
     store.upsertThread({
       userKey: "user:1",
@@ -72,7 +72,7 @@ describe("BranchSuggestionCoordinator", () => {
       }
     );
 
-    expect(routed.map((item) => item.text)).toEqual(["/new", "fresh topic"]);
+    expect(routed.map((item) => item.text)).toEqual(["/thread new", "fresh topic"]);
     store.close();
   });
 

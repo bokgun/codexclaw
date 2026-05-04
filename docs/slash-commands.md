@@ -3,17 +3,30 @@
 codexclaw slash commands are handled by the shared router. Telegram and CLI use
 the same command set unless a command is explicitly marked channel-specific.
 
+## Command Shape
+
+codexclaw keeps project/workspace commands and thread commands in separate
+namespaces:
+
+- `/project ...` is reserved for selecting and managing workspaces/projects.
+- `/thread ...` manages Codex threads inside the active project.
+- `/tasks`, `/prefs`, and `/wiki` are feature namespaces.
+
+Older top-level thread commands such as `/new`, `/switch`, `/threads`,
+`/branch`, and `/archive` remain accepted as compatibility aliases, but new
+docs and channel shortcuts should prefer the explicit `/thread ...` form.
+
 ## Current Commands
 
 | Command | Arguments | What It Does |
 | --- | --- | --- |
-| `/threads` | none | Lists your known threads. The active thread is marked with `*`, and each row shows the thread label and status. |
-| `/new` | optional label | Creates a new Codex thread and switches your active thread to it. Without a label, codexclaw generates one. |
-| `/new <label>` | label | Creates a new named thread and switches to it. Duplicate labels are rejected. |
-| `/switch <label>` | label | Switches your active thread to an existing label. |
-| `/branch` | optional label | Attempts to fork the active thread into a new branch and switches to it. If `thread/fork` is not enabled, this returns a capability error. |
-| `/branch <label>` | label | Attempts to fork the active thread into the given label. Duplicate labels are rejected before forking. |
-| `/archive <label>` | label | Attempts to archive the named thread. If `thread/archive` is not enabled, this returns a capability error. |
+| `/thread list` | none | Lists your known threads in the active project. The active thread is marked with `*`, and each row shows the thread label and status. |
+| `/thread new` | optional label | Creates a new Codex thread in the active project and switches your active thread to it. Without a label, codexclaw generates one. |
+| `/thread new <label>` | label | Creates a new named thread in the active project and switches to it. Duplicate labels are rejected within that project. |
+| `/thread switch <label>` | label | Switches your active thread in the active project to an existing label. |
+| `/thread branch` | optional label | Attempts to fork the active thread into a new branch and switches to it. If `thread/fork` is not enabled, this returns a capability error. |
+| `/thread branch <label>` | label | Attempts to fork the active thread into the given label. Duplicate labels are rejected before forking. |
+| `/thread archive <label>` | label | Attempts to archive the named thread. If `thread/archive` is not enabled, this returns a capability error. |
 | `/tasks add <schedule> <label> <prompt>` | schedule, label, prompt | Creates a scheduled task bound to the named thread label without switching your active interactive thread. Schedules may be `every <n>s|m|h|d` or simple five-field cron. |
 | `/tasks list` | none | Lists your scheduled tasks, next run time, and failure count. |
 | `/tasks pause <id>` | task id | Pauses a scheduled task. |
@@ -22,6 +35,28 @@ the same command set unless a command is explicitly marked channel-specific.
 | `/prefs show` | none | Shows whitelisted user preferences. |
 | `/prefs set <key> <value>` | key, value | Sets `lang`, `tone`, or `verbosity`. |
 | `/prefs unset <key>` | key | Removes `lang`, `tone`, or `verbosity`. |
+
+Compatibility aliases:
+
+| Alias | Preferred Form |
+| --- | --- |
+| `/threads` | `/thread list` |
+| `/new [label]` | `/thread new [label]` |
+| `/switch <label>` | `/thread switch <label>` |
+| `/branch [label]` | `/thread branch [label]` |
+| `/archive <label>` | `/thread archive <label>` |
+
+## Reserved Project Commands
+
+These commands are reserved for the future multi-project runtime and should not
+be reused for thread behavior:
+
+| Command | Intended Meaning |
+| --- | --- |
+| `/project list` | List configured projects/workspaces. |
+| `/project switch <project>` | Switch the active project for the current user/channel identity. |
+| `/project add <project> <path>` | Register a project workspace. |
+| `/project show` | Show the active project and its state/app-server status. |
 
 Labels use lowercase letters, numbers, `.`, `_`, and `-`; they must start with a
 letter or number.
@@ -45,7 +80,7 @@ letter or number.
 - `/start` is not a codexclaw command yet, so it currently returns
   `Unknown command '/start'.`
 - `/quit` and `/exit` are not Telegram commands and do not stop the host.
-- Branch suggestion buttons may internally route `/new` before replaying the
+- Branch suggestion buttons may internally route `/thread new` before replaying the
   held message, but users do not need to type a special command for that flow.
 
 ## CLI Notes
@@ -65,7 +100,8 @@ letter or number.
 - For local personal Discord bots, DM text and mentioned guild text may use
   `:command` as a convenience alias. The adapter converts it to the shared
   router command before execution. For example, `:threads` is routed as
-  `/threads`, and `@bot :switch work` is routed as `/switch work`.
+  `/threads`, `:thread list` is routed as `/thread list`, and
+  `@bot :thread switch work` is routed as `/thread switch work`.
 - Gateway text is prompt text only; slash-looking gateway text is rejected and
   users should use a registered Discord slash command, a `:command` local
   shortcut, or normal prompt text without a leading slash.
@@ -77,9 +113,10 @@ for real Discord slash commands while keeping Router behavior centralized.
 
 | Discord text | Router input |
 | --- | --- |
-| `:threads` | `/threads` |
-| `:new work` | `/new work` |
-| `:switch work` | `/switch work` |
+| `:threads` | `/threads` compatibility alias |
+| `:thread list` | `/thread list` |
+| `:thread new work` | `/thread new work` |
+| `:thread switch work` | `/thread switch work` |
 | `:tasks list` | `/tasks list` |
 | `:prefs show` | `/prefs show` |
 

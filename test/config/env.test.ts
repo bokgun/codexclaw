@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { getDiscordConfig, getTelegramConfig, getWikiConfig, redactDiscordSecrets, redactTelegramSecrets } from "../../src/config/env.js";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  getDiscordConfig,
+  getRuntimePathConfig,
+  getTelegramConfig,
+  getWikiConfig,
+  redactDiscordSecrets,
+  redactTelegramSecrets
+} from "../../src/config/env.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -8,6 +18,28 @@ afterEach(() => {
     if (!(key in ORIGINAL_ENV)) delete process.env[key];
   }
   Object.assign(process.env, ORIGINAL_ENV);
+});
+
+describe("Runtime path config", () => {
+  test("defaults state under the workspace and resolves explicit paths from the workspace", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = ".state/codexclaw";
+    process.env.CODEXCLAW_DB = ".state/codexclaw/pointers.sqlite";
+
+    const config = getRuntimePathConfig();
+
+    expect(config.workspaceRoot).toBe(workspace);
+    expect(config.stateDir).toBe(join(workspace, ".state/codexclaw"));
+    expect(config.dbPath).toBe(join(workspace, ".state/codexclaw/pointers.sqlite"));
+  });
+
+  test("rejects a workspace root that is not a directory", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = join(workspace, "missing");
+
+    expect(() => getRuntimePathConfig()).toThrow("CODEXCLAW_WORKSPACE_ROOT");
+  });
 });
 
 describe("Telegram config", () => {
@@ -88,6 +120,8 @@ describe("Discord config", () => {
 
 describe("Wiki config", () => {
   test("loads optional wiki settings with bounded limits", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
     process.env.CODEXCLAW_WIKI_ENABLED = "true";
     process.env.CODEXCLAW_WIKI_ROOT = "knowledge";
     process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS = "docs,README.md";
@@ -99,8 +133,8 @@ describe("Wiki config", () => {
 
     expect(config).toEqual({
       enabled: true,
-      wikiRoot: "knowledge",
-      allowedSourceRoots: ["docs", "README.md"],
+      wikiRoot: join(workspace, "knowledge"),
+      allowedSourceRoots: [join(workspace, "docs"), join(workspace, "README.md")],
       maxSourceBytes: 4096,
       maxQueryResults: 3,
       maxExcerptChars: 300
