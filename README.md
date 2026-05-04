@@ -92,8 +92,12 @@ Discord v1 runs in personal mode only. DMs and bot mentions in guild channels
 route by sender identity (`discord:<user-id>`); guild channel IDs are only
 reply targets and are not shared team thread ownership. Signed HTTP
 interactions are the only executable command, approval, and branch-button path.
-Gateway text is prompt text only, and text beginning with `/` is rejected with a
-notice to use Discord slash commands.
+Gateway text is prompt text by default. Text beginning with `/` is rejected with
+a notice to use registered Discord slash commands, while the local personal-bot
+shortcut `:threads`/`:switch work` is converted to the shared `/threads` and
+`/switch work` router commands. Approval and branch-suggestion buttons also
+accept local text fallbacks such as `1`, `2`, and `3 <instruction>` so personal
+bots can approve without a public interaction endpoint.
 
 ```bash
 CODEXCLAW_DISCORD_BOT_TOKEN=bot-token

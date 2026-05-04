@@ -324,7 +324,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     const key = this.keyFactory();
     const sent = await this.api.sendMessage({
       channel_id: channelId,
-      content: request.text,
+      content: formatBranchSuggestionPrompt(request.text),
       components: [buttonRow([
         { type: 2, label: "New thread", custom_id: branchCustomId(key, "new"), style: 1 },
         { type: 2, label: "Continue", custom_id: branchCustomId(key, "continue"), style: 2 }
@@ -365,16 +365,20 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     if (normalizedText.startsWith("/")) {
       await this.api.sendMessage({
         channel_id: message.channel_id,
-        content: "Use Discord slash commands for codexclaw commands. Gateway text is treated as prompt text only."
+        content:
+          "That was received as normal Discord message text, not a signed app command. Use a registered Discord slash command, or send a normal prompt without a leading slash."
       });
       return;
     }
+    if (await this.tryProcessTextApproval(message, author, normalizedText)) return;
+    if (this.tryProcessTextBranchSuggestion(message, author, normalizedText)) return;
+    const routedText = normalizeDiscordTextCommandAlias(normalizedText);
 
     this.messages.push({
       id: discordMessageId(message.channel_id, message.id),
       userKey: discordUserKey(author.id),
       channel: this.name,
-      text: normalizedText,
+      text: routedText,
       receivedAt: message.timestamp ?? this.now().toISOString(),
       channelThreadKey: discordChannelThreadKey(message.channel_id),
       replyToMessageId: message.message_reference?.message_id
@@ -580,6 +584,60 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     });
   }
 
+  private async tryProcessTextApproval(
+    message: DiscordGatewayMessage,
+    author: DiscordUser,
+    text: string
+  ): Promise<boolean> {
+    const parsed = parseTextApprovalDecision(text);
+    if (!parsed) return false;
+
+    const pending = this.findPendingApproval(author.id, message.channel_id);
+    if (!pending) return false;
+    if (this.isExpired(pending.request.expiresAt)) {
+      this.pendingApprovals.delete(pending.key);
+      await this.api.sendMessage({ channel_id: message.channel_id, content: "Approval expired." });
+      return true;
+    }
+    if (parsed.decision === "modify" && !parsed.modifyText) {
+      await this.api.sendMessage({
+        channel_id: message.channel_id,
+        content: "Usage: `3 <instruction>` or `:modify <instruction>`."
+      });
+      return true;
+    }
+
+    this.pendingApprovals.delete(pending.key);
+    this.approvals.push(this.buildApprovalResponse(pending, parsed.decision, parsed.modifyText));
+    return true;
+  }
+
+  private tryProcessTextBranchSuggestion(
+    message: DiscordGatewayMessage,
+    author: DiscordUser,
+    text: string
+  ): boolean {
+    const decision = parseTextBranchSuggestionDecision(text);
+    if (!decision) return false;
+
+    const pending = this.findPendingBranchSuggestion(author.id, message.channel_id);
+    if (!pending) return false;
+    if (this.isExpired(pending.request.expiresAt)) {
+      this.clearBranchSuggestion(pending.key, pending);
+      return true;
+    }
+
+    this.clearBranchSuggestion(pending.key, pending);
+    this.branchSuggestions.push({
+      suggestionId: pending.request.suggestionId,
+      userKey: pending.request.userKey,
+      channelThreadKey: pending.request.channelThreadKey,
+      decision,
+      receivedAt: this.now().toISOString()
+    });
+    return true;
+  }
+
   private async processComponentInteraction(interaction: DiscordInteraction, user: DiscordUser): Promise<void> {
     const data = parseCustomId(interaction.data?.custom_id);
     if (!data) {
@@ -715,6 +773,16 @@ export class DiscordChannelAdapter implements ChannelAdapter {
       receivedAt: this.now().toISOString(),
       channelThreadKey: pending.request.channelThreadKey
     };
+  }
+
+  private findPendingApproval(userId: string, channelId: string): PendingApproval | undefined {
+    return [...this.pendingApprovals.values()].find((pending) => pending.userId === userId && pending.channelId === channelId);
+  }
+
+  private findPendingBranchSuggestion(userId: string, channelId: string): PendingBranchSuggestion | undefined {
+    return [...this.pendingBranchSuggestions.values()].find(
+      (pending) => pending.userId === userId && pending.channelId === channelId
+    );
   }
 
   private interactionMatchesPending(
@@ -882,7 +950,36 @@ export function verifyDiscordInteractionSignature(input: {
 }
 
 function formatApprovalPrompt(request: ChannelApprovalRequest): string {
-  return [`Approval requested`, "", request.prompt, "", `Expires at: ${request.expiresAt}`].join("\n");
+  return [
+    `Approval requested`,
+    "",
+    request.prompt,
+    "",
+    "Reply `1` to approve, `2` to reject, or `3 <instruction>` to modify.",
+    `Expires at: ${request.expiresAt}`
+  ].join("\n");
+}
+
+function formatBranchSuggestionPrompt(text: string): string {
+  return `${text}\n\nReply \`1\` for New thread or \`2\` to Continue.`;
+}
+
+function parseTextApprovalDecision(text: string): { decision: ApprovalDecision; modifyText?: string } | undefined {
+  const match = /^(?:[:]?)?(approve|reject|modify|a|y|yes|r|n|no|m|1|2|3)(?:\s+([\s\S]+))?$/i.exec(text.trim());
+  if (!match) return undefined;
+  const raw = match[1]?.toLowerCase();
+  const modifyText = match[2]?.trim();
+  if (raw === "1" || raw === "approve" || raw === "a" || raw === "y" || raw === "yes") return { decision: "approve" };
+  if (raw === "2" || raw === "reject" || raw === "r" || raw === "n" || raw === "no") return { decision: "reject" };
+  if (raw === "3" || raw === "modify" || raw === "m") return { decision: "modify", modifyText };
+  return undefined;
+}
+
+function parseTextBranchSuggestionDecision(text: string): BranchSuggestionDecision | undefined {
+  const normalized = text.trim().toLowerCase();
+  if (normalized === "1" || normalized === "new" || normalized === "new thread" || normalized === ":new") return "new_thread";
+  if (normalized === "2" || normalized === "continue" || normalized === "cont" || normalized === ":continue") return "continue";
+  return undefined;
 }
 
 async function readLimitedRequestBody(request: Request, limitBytes: number): Promise<Uint8Array> {
@@ -919,6 +1016,10 @@ class BodyTooLargeError extends Error {}
 function formatSlashCommand(command: string, options: readonly DiscordCommandOption[]): string {
   const args = flattenCommandOptions(options).join(" ");
   return args ? `/${command} ${args}` : `/${command}`;
+}
+
+function normalizeDiscordTextCommandAlias(text: string): string {
+  return text.replace(/^:([a-z][a-z0-9_-]*)(?=\s|$)/i, "/$1");
 }
 
 function flattenCommandOptions(options: readonly DiscordCommandOption[]): string[] {

@@ -502,7 +502,6 @@ export class PointerStore {
           created_at text not null,
           updated_at text not null
         );
-        create index if not exists tasks_due_idx on tasks(channel, enabled, next_run_at);
 
         create table if not exists prefs (
           user_key text not null,
@@ -516,6 +515,11 @@ export class PointerStore {
       const threadColumns = this.schemaColumns("threads");
       if (!threadColumns.includes("last_branch_suggested_at")) {
         this.db.exec(`alter table threads add column last_branch_suggested_at text`);
+      }
+
+      const pendingApprovalColumns = this.schemaColumns("pending_approvals");
+      if (!pendingApprovalColumns.includes("channel")) {
+        this.db.exec(`alter table pending_approvals add column channel text not null default 'cli'`);
       }
 
       const taskColumns = this.schemaColumns("tasks");

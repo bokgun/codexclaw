@@ -37,7 +37,7 @@ export class EventDispatcher {
     const eventThreadId = "threadId" in event ? event.threadId : undefined;
     if (eventThreadId) {
       const target = this.threadTargets.get(eventThreadId);
-      if (target?.channel === "telegram" && isTerminalTurnEvent(event)) {
+      if (target && isChatChannel(target.channel) && isTerminalTurnEvent(event)) {
         await this.channel.flushDeltas?.();
       }
       const text = target ? summarizeEvent(event, target.channel) : undefined;
@@ -70,12 +70,16 @@ function isTerminalTurnEvent(event: RuntimeEvent): boolean {
 }
 
 function summarizeEvent(event: RuntimeEvent, channel: ChannelName): string | undefined {
-  if (channel === "telegram" && (event.kind === "turn_started" || event.kind === "turn_completed")) return undefined;
+  if (isChatChannel(channel) && (event.kind === "turn_started" || event.kind === "turn_completed")) return undefined;
   if (event.kind === "turn_started") return "Turn started.";
   if (event.kind === "turn_completed") return "Turn completed.";
   if (event.kind === "turn_failed") return "Turn failed.";
-  if (channel === "telegram" && (event.kind === "diff_updated" || event.kind === "tool_event")) return undefined;
+  if (isChatChannel(channel) && (event.kind === "diff_updated" || event.kind === "tool_event")) return undefined;
   if (event.kind === "diff_updated") return `Diff updated${event.size === undefined ? "." : ` (${event.size} bytes).`}`;
   if (event.kind === "tool_event") return `Tool event${event.status ? `: ${event.status}` : "."}`;
   return undefined;
+}
+
+function isChatChannel(channel: ChannelName): boolean {
+  return channel === "telegram" || channel === "discord";
 }

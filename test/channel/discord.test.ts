@@ -67,6 +67,50 @@ describe("DiscordChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("normalizes Discord colon command aliases into shared slash commands", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const iterator = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: ":threads",
+      author: { id: "42" }
+    });
+    await adapter.processGatewayMessage({
+      id: "m2",
+      channel_id: "100",
+      guild_id: "900",
+      content: "<@123456> :switch work",
+      author: { id: "42" }
+    });
+
+    const first = await iterator.next();
+    const second = await iterator.next();
+
+    expect(first.value?.text).toBe("/threads");
+    expect(second.value?.text).toBe("/switch work");
+    await adapter.close();
+  });
+
+  test("leaves non-command colon text as prompt text", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const iterator = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: ":) keep this as a prompt",
+      author: { id: "42" }
+    });
+    const next = await iterator.next();
+
+    expect(next.value?.text).toBe(":) keep this as a prompt");
+    await adapter.close();
+  });
+
   test("rejects gateway slash-looking text instead of routing commands", async () => {
     const api = new FakeDiscordApi();
     const adapter = adapterWith(api);
@@ -82,7 +126,7 @@ describe("DiscordChannelAdapter", () => {
 
     expect(routed).toBe("none");
     expect(api.sent.map((message) => message.content)).toEqual([
-      "Use Discord slash commands for codexclaw commands. Gateway text is treated as prompt text only."
+      "That was received as normal Discord message text, not a signed app command. Use a registered Discord slash command, or send a normal prompt without a leading slash."
     ]);
     await adapter.close();
   });
@@ -166,6 +210,72 @@ describe("DiscordChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("accepts local text approval responses without Discord interactions", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+    const messages = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.requestApproval({
+      approvalId: "approval-1",
+      userKey: "discord:42",
+      threadId: "thread-1",
+      prompt: "Run command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: "1",
+      author: { id: "42" }
+    });
+
+    const approval = await approvals.next();
+    const routed = await Promise.race([messages.next(), delay(10).then(() => "none" as const)]);
+
+    expect(api.sent[0]?.content).toContain("Reply `1` to approve");
+    expect(approval.value).toMatchObject({
+      approvalId: "approval-1",
+      userKey: "discord:42",
+      decision: "approve",
+      channelThreadKey: "discord:100"
+    });
+    expect(routed).toBe("none");
+    await adapter.close();
+  });
+
+  test("accepts local text modify responses with instructions", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.requestApproval({
+      approvalId: "approval-1",
+      userKey: "discord:42",
+      threadId: "thread-1",
+      prompt: "Run command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: ":modify Use safer command",
+      author: { id: "42" }
+    });
+    const approval = await approvals.next();
+
+    expect(approval.value).toMatchObject({
+      approvalId: "approval-1",
+      decision: "modify",
+      modifyText: "Use safer command"
+    });
+    await adapter.close();
+  });
+
   test("maps Modify button to reject-style response plus modal follow-up text", async () => {
     const api = new FakeDiscordApi();
     const adapter = adapterWith(api);
@@ -234,6 +344,38 @@ describe("DiscordChannelAdapter", () => {
     }));
     const response = await responses.next();
 
+    expect(response.value).toEqual({
+      suggestionId: "suggestion-1",
+      userKey: "discord:42",
+      channelThreadKey: "discord:100",
+      decision: "continue",
+      receivedAt: "2026-05-01T00:00:00.000Z"
+    });
+    await adapter.close();
+  });
+
+  test("accepts local text branch suggestion responses without Discord interactions", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const responses = adapter.branchSuggestionResponses[Symbol.asyncIterator]();
+
+    await adapter.requestBranchSuggestion({
+      suggestionId: "suggestion-1",
+      userKey: "discord:42",
+      channelThreadKey: "discord:100",
+      text: "Start new thread?",
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      options: ["new_thread", "continue"]
+    });
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: "2",
+      author: { id: "42" }
+    });
+    const response = await responses.next();
+
+    expect(api.sent[0]?.content).toContain("Reply `1` for New thread");
     expect(response.value).toEqual({
       suggestionId: "suggestion-1",
       userKey: "discord:42",

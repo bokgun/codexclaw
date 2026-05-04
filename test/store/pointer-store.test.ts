@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,6 +154,36 @@ describe("PointerStore", () => {
     expect(store.schemaColumns("threads")).toContain("last_branch_suggested_at");
   });
 
+  test("migrates legacy task schema before creating due-task index", () => {
+    const path = tempDbPath();
+    const legacy = new Database(path, { create: true, strict: true });
+    legacy.exec(`
+      create table schema_migrations (
+        version integer primary key,
+        applied_at text not null
+      );
+      insert into schema_migrations (version, applied_at) values (3, '2026-05-01T00:00:00.000Z');
+      create table tasks (
+        task_id text primary key,
+        user_key text not null,
+        thread_label text not null,
+        schedule text not null,
+        enabled integer not null default 1,
+        created_at text not null,
+        updated_at text not null
+      );
+    `);
+    legacy.close();
+
+    const store = new PointerStore(path);
+
+    expect(store.schemaColumns("tasks")).toEqual(
+      expect.arrayContaining(["channel", "task_instruction", "retry", "timeout_sec", "dedupe_policy", "next_run_at"])
+    );
+    expect(store.listDueTasks("cli", "2026-05-02T00:00:00.000Z")).toEqual([]);
+    store.close();
+  });
+
   test("does not expose persistence columns for conversation content or approval history", () => {
     const store = newStore();
     const forbidden = [
@@ -264,9 +295,13 @@ describe("PointerStore", () => {
 });
 
 function newStore(): PointerStore {
+  return new PointerStore(tempDbPath());
+}
+
+function tempDbPath(): string {
   const root = mkdtempSync(join(tmpdir(), "codexclaw-store-test-"));
   roots.push(root);
-  return new PointerStore(join(root, "codexclaw.sqlite"));
+  return join(root, "codexclaw.sqlite");
 }
 
 function activeLabels(store: PointerStore, userKey: string): string[] {
