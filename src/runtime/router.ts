@@ -1,5 +1,6 @@
 import type { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { attachPrefsToText } from "../codex/input.js";
+import { attachWikiContextToText } from "../wiki/context.js";
 import { parseSchedule } from "./schedule.js";
 import type { ThreadManager } from "../thread/thread-manager.js";
 import type { PointerStore } from "../store/pointer-store.js";
@@ -10,10 +11,49 @@ import { TurnQueue } from "./turn-queue.js";
 export interface RouterOptions {
   bindThread?: (thread: ThreadRecord, message: InboundMessage) => void;
   store?: PointerStore;
+  wiki?: WikiCommandService;
   channel?: ChannelName;
   minScheduleIntervalMs?: number;
   defaultTaskRetry?: number;
   defaultTaskTimeoutSec?: number;
+}
+
+export interface WikiCommandService {
+  ingestFiles(input: {
+    userKey: string;
+    paths: readonly string[];
+    visibility: "project_public" | "user_private";
+    slug?: string;
+    focus?: string;
+  }): Promise<{ pagePath: string; manifestPath: string; sourceCount: number }>;
+  addNote(input: {
+    userKey: string;
+    title: string;
+    body: string;
+    visibility: "project_public" | "user_private";
+  }): Promise<{ pagePath: string; manifestPath: string }>;
+  captureSelected(input: {
+    userKey: string;
+    text: string;
+    visibility: "project_public" | "user_private";
+    slug?: string;
+  }): Promise<{ pagePath: string; manifestPath: string }>;
+  query(input: { userKey: string; query: string; limit?: number }): Promise<readonly WikiCommandQueryResult[]>;
+  lint(input: { userKey: string; writeReport: boolean }): Promise<{ findings: readonly WikiCommandLintFinding[]; reportPath?: string }>;
+}
+
+export interface WikiCommandQueryResult {
+  pagePath: string;
+  title: string;
+  excerpt: string;
+  sourceRefs?: readonly { displayPath: string; lineStart?: number; lineEnd?: number }[];
+}
+
+export interface WikiCommandLintFinding {
+  severity: "error" | "warning" | "info";
+  kind: string;
+  pagePath: string;
+  message: string;
 }
 
 export interface ScheduledRouteInput {
@@ -291,6 +331,9 @@ export class Router {
       case "/prefs":
         await this.handlePrefsCommand(message, args);
         return;
+      case "/wiki":
+        await this.handleWikiCommand(message, args);
+        return;
       default:
         throw new RoutingError(`Unknown command '${command}'.`, "invalid_command");
     }
@@ -397,6 +440,57 @@ export class Router {
     throw new RoutingError("Usage: /prefs show|set|unset", "invalid_command");
   }
 
+  private async handleWikiCommand(message: InboundMessage, args: string[]): Promise<void> {
+    const wiki = this.options.wiki;
+    if (!wiki) throw new RoutingError("Wiki is not enabled in this runtime.", "capability_unavailable");
+    const action = args[0];
+    if (action === "ingest") {
+      const parsed = parseWikiIngestArgs(args.slice(1));
+      if (!parsed) throw new RoutingError("Usage: /wiki ingest [--public|--private] [--slug <slug>] <path...> [--focus <text>]", "invalid_command");
+      const result = await wiki.ingestFiles({ userKey: message.userKey, ...parsed });
+      await this.sendText(message, `Wiki page written: ${result.pagePath}\nManifest: ${result.manifestPath}\nSources: ${result.sourceCount}`);
+      return;
+    }
+    if (action === "note") {
+      const parsed = parseWikiNoteArgs(args.slice(1));
+      if (!parsed) throw new RoutingError("Usage: /wiki note [--public|--private] <title> <body>", "invalid_command");
+      const result = await wiki.addNote({ userKey: message.userKey, ...parsed });
+      await this.sendText(message, `Wiki note written: ${result.pagePath}\nManifest: ${result.manifestPath}`);
+      return;
+    }
+    if (action === "capture-selected") {
+      const parsed = parseWikiCaptureArgs(args.slice(1));
+      if (!parsed) throw new RoutingError("Usage: /wiki capture-selected [--public|--private] [--slug <slug>] <selected text>", "invalid_command");
+      const result = await wiki.captureSelected({ userKey: message.userKey, ...parsed });
+      await this.sendText(message, `Wiki capture written: ${result.pagePath}\nManifest: ${result.manifestPath}`);
+      return;
+    }
+    if (action === "query") {
+      const parsed = parseWikiQueryArgs(args.slice(1));
+      if (!parsed) throw new RoutingError("Usage: /wiki query [--limit <n>] <query>", "invalid_command");
+      const results = await wiki.query({ userKey: message.userKey, ...parsed });
+      await this.sendText(message, formatWikiQueryResults(results));
+      return;
+    }
+    if (action === "with") {
+      const parsed = parseWikiWithArgs(args.slice(1));
+      if (!parsed) throw new RoutingError("Usage: /wiki with [--limit <n>] <query> -- <message>", "invalid_command");
+      if (!this.connected) throw new RoutingError("Codex app-server is disconnected; wait for reconnect before sending more work.", "disconnected");
+      const results = await wiki.query({ userKey: message.userKey, query: parsed.query, limit: parsed.limit });
+      const thread = await this.threads.resolveRoutableThread(message.userKey);
+      this.options.bindThread?.(thread, message);
+      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, attachWikiContextToText(parsed.message, results)));
+      return;
+    }
+    if (action === "lint") {
+      if (args.length > 2 || (args[1] && args[1] !== "--write-report")) throw new RoutingError("Usage: /wiki lint [--write-report]", "invalid_command");
+      const result = await wiki.lint({ userKey: message.userKey, writeReport: args[1] === "--write-report" });
+      await this.sendText(message, formatWikiLintResult(result));
+      return;
+    }
+    throw new RoutingError("Usage: /wiki ingest|note|capture-selected|query|with|lint", "invalid_command");
+  }
+
   private attachPrefs(userKey: string, text: string): string {
     return this.options.store ? attachPrefsToText(text, this.options.store.listPrefs(userKey)) : text;
   }
@@ -414,6 +508,139 @@ export class Router {
 
 function readPrefKey(value: string | undefined): PrefKey | undefined {
   return value === "lang" || value === "tone" || value === "verbosity" ? value : undefined;
+}
+
+function parseWikiIngestArgs(args: string[]):
+  | { paths: readonly string[]; visibility: "project_public" | "user_private"; slug?: string; focus?: string }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  let slug: string | undefined;
+  let focus: string | undefined;
+  const paths: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--public") {
+      visibility = "project_public";
+      continue;
+    }
+    if (arg === "--private") {
+      visibility = "user_private";
+      continue;
+    }
+    if (arg === "--slug") {
+      slug = args[index + 1];
+      index += 1;
+      if (!slug || !isValidWikiSlug(slug)) return undefined;
+      continue;
+    }
+    if (arg === "--focus") {
+      focus = args.slice(index + 1).join(" ").trim();
+      if (!focus) return undefined;
+      break;
+    }
+    if (!arg || arg.startsWith("--")) return undefined;
+    paths.push(arg);
+  }
+  if (paths.length === 0) return undefined;
+  return { paths, visibility, slug, focus };
+}
+
+function parseWikiNoteArgs(args: string[]):
+  | { title: string; body: string; visibility: "project_public" | "user_private" }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  const rest = [...args];
+  while (rest[0] === "--public" || rest[0] === "--private") {
+    visibility = rest.shift() === "--public" ? "project_public" : "user_private";
+  }
+  const title = rest.shift();
+  const body = rest.join(" ").trim();
+  if (!title || !body) return undefined;
+  return { title, body, visibility };
+}
+
+function parseWikiCaptureArgs(args: string[]):
+  | { text: string; visibility: "project_public" | "user_private"; slug?: string }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  let slug: string | undefined;
+  const rest: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--public") {
+      visibility = "project_public";
+      continue;
+    }
+    if (arg === "--private") {
+      visibility = "user_private";
+      continue;
+    }
+    if (arg === "--slug") {
+      slug = args[index + 1];
+      index += 1;
+      if (!slug || !isValidWikiSlug(slug)) return undefined;
+      continue;
+    }
+    rest.push(arg);
+  }
+  const text = rest.join(" ").trim();
+  if (!text) return undefined;
+  return { text, visibility, slug };
+}
+
+function parseWikiQueryArgs(args: string[]): { query: string; limit?: number } | undefined {
+  let limit: number | undefined;
+  const rest: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--limit") {
+      const value = Number.parseInt(args[index + 1] ?? "", 10);
+      index += 1;
+      if (!Number.isInteger(value) || value < 1 || value > 20) return undefined;
+      limit = value;
+      continue;
+    }
+    rest.push(arg);
+  }
+  const query = rest.join(" ").trim();
+  if (!query) return undefined;
+  return { query, limit };
+}
+
+function parseWikiWithArgs(args: string[]): { query: string; message: string; limit?: number } | undefined {
+  const separator = args.indexOf("--");
+  if (separator <= 0 || separator === args.length - 1) return undefined;
+  const query = parseWikiQueryArgs(args.slice(0, separator));
+  const message = args.slice(separator + 1).join(" ").trim();
+  if (!query || !message) return undefined;
+  return { ...query, message };
+}
+
+function formatWikiQueryResults(results: readonly WikiCommandQueryResult[]): string {
+  if (results.length === 0) return "No wiki results.";
+  return results
+    .map((result, index) => {
+      const refs =
+        result.sourceRefs && result.sourceRefs.length > 0
+          ? `\n  sources: ${result.sourceRefs.map((ref) => ref.displayPath).join(", ")}`
+          : "";
+      return `${index + 1}. ${result.title} (${result.pagePath})\n${result.excerpt}${refs}`;
+    })
+    .join("\n\n");
+}
+
+function formatWikiLintResult(result: { findings: readonly WikiCommandLintFinding[]; reportPath?: string }): string {
+  const header = result.findings.length === 0 ? "Wiki lint passed." : `Wiki lint found ${result.findings.length} issue(s).`;
+  const report = result.reportPath ? `\nReport: ${result.reportPath}` : "";
+  const findings = result.findings
+    .slice(0, 10)
+    .map((finding) => `\n- [${finding.severity}] ${finding.kind} ${finding.pagePath}: ${finding.message}`)
+    .join("");
+  return `${header}${report}${findings}`;
+}
+
+function isValidWikiSlug(slug: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(slug) && !slug.includes("..");
 }
 
 function looksLikeCronParts(parts: string[]): boolean {

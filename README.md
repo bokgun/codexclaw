@@ -59,6 +59,35 @@ manager, approval bridge, and one-active-turn queue that future Telegram and
 Discord adapters build on. The older spike scripts remain available under
 `bun run spike:*` for protocol diagnostics.
 
+## Knowledge Wiki
+
+M3.5 adds an optional Markdown Knowledge Wiki for fork-specific, auditable
+project knowledge. It is disabled by default and stores only human-reviewable
+wiki pages, manifests, explicit user notes, and redacted lint reports under the
+configured wiki root. It does not copy Codex rollout history, tool calls, diffs,
+approval histories, or hidden conversation replicas.
+
+```bash
+CODEXCLAW_WIKI_ENABLED=true
+CODEXCLAW_WIKI_ROOT=wiki
+CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS=docs,README.md
+bun run cli
+```
+
+Useful commands:
+
+- `/wiki ingest [--public|--private] [--slug <slug>] <path...> [--focus <text>]`
+- `/wiki note [--public|--private] <title> <body>`
+- `/wiki capture-selected [--public|--private] [--slug <slug>] <selected text>`
+- `/wiki query [--limit <n>] <query>`
+- `/wiki with [--limit <n>] <query> -- <message>`
+- `/wiki lint [--write-report]`
+
+Wiki artifacts are either `project_public` or `user_private`. Private pages are
+visible only to the owning `user_key` during query and context attachment. Wiki
+context is attached as data-only text and sanitized like prefs; it cannot alter
+Codex sandbox, approval, model routing, or AGENTS.md policy.
+
 ## Telegram Runtime
 
 Telegram runs as a long-polling personal channel:

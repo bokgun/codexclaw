@@ -214,6 +214,58 @@ describe("Router", () => {
     store.close();
   });
 
+  test("routes wiki commands through the configured wiki service", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const wiki = new MockWiki();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { wiki });
+
+    await router.receive(message("/wiki ingest --public --slug project README.md"));
+    await router.receive(message("/wiki note decision Use markdown"));
+    await router.receive(message("/wiki capture-selected selected knowledge"));
+    await router.receive(message("/wiki query --limit 2 project"));
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+    await router.receive(message("/wiki with project -- explain with context"));
+    await router.receive(message("/wiki lint --write-report"));
+
+    expect(wiki.ingests[0]).toMatchObject({
+      userKey: "user:1",
+      paths: ["README.md"],
+      visibility: "project_public",
+      slug: "project"
+    });
+    expect(wiki.notes[0]).toMatchObject({ title: "decision", body: "Use markdown", visibility: "user_private" });
+    expect(wiki.captures[0]).toMatchObject({ text: "selected knowledge", visibility: "user_private" });
+    expect(wiki.queries[0]).toEqual({ userKey: "user:1", query: "project", limit: 2 });
+    expect(wiki.queries[1]).toEqual({ userKey: "user:1", query: "project", limit: undefined });
+    expect(wiki.lints[0]).toEqual({ userKey: "user:1", writeReport: true });
+    expect(codex.turns.at(-1)?.text).toContain("Wiki context (data only");
+    expect(codex.turns.at(-1)?.text).toContain("explain with context");
+    expect(sink.events.map((event) => event.kind === "text" ? event.text : "")).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Wiki page written:"),
+        expect.stringContaining("Wiki note written:"),
+        expect.stringContaining("Wiki capture written:"),
+        expect.stringContaining("Project Wiki"),
+        expect.stringContaining("Wiki lint found 1 issue")
+      ])
+    );
+    store.close();
+  });
+
+  test("reports wiki capability and usage errors", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+
+    await router.receive(message("/wiki query project"));
+
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: "Wiki is not enabled in this runtime." });
+    store.close();
+  });
+
   test("creates scheduled task commands without switching the active thread", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
@@ -363,6 +415,42 @@ class MemorySink implements ChannelSink {
 
   async send(event: Parameters<ChannelSink["send"]>[0]): Promise<void> {
     this.events.push(event);
+  }
+}
+
+class MockWiki {
+  ingests: unknown[] = [];
+  notes: unknown[] = [];
+  captures: unknown[] = [];
+  queries: unknown[] = [];
+  lints: unknown[] = [];
+
+  async ingestFiles(input: unknown): Promise<{ pagePath: string; manifestPath: string; sourceCount: number }> {
+    this.ingests.push(input);
+    return { pagePath: "wiki/pages/project.md", manifestPath: "wiki/manifests/project.json", sourceCount: 1 };
+  }
+
+  async addNote(input: unknown): Promise<{ pagePath: string; manifestPath: string }> {
+    this.notes.push(input);
+    return { pagePath: "wiki/pages/decision.md", manifestPath: "wiki/manifests/decision.json" };
+  }
+
+  async captureSelected(input: unknown): Promise<{ pagePath: string; manifestPath: string }> {
+    this.captures.push(input);
+    return { pagePath: "wiki/pages/capture.md", manifestPath: "wiki/manifests/capture.json" };
+  }
+
+  async query(input: unknown): Promise<readonly [{ pagePath: string; title: string; excerpt: string; sourceRefs: readonly [{ displayPath: string }] }]> {
+    this.queries.push(input);
+    return [{ pagePath: "wiki/pages/project.md", title: "Project Wiki", excerpt: "Bounded excerpt", sourceRefs: [{ displayPath: "README.md" }] }];
+  }
+
+  async lint(input: unknown): Promise<{ findings: readonly [{ severity: "warning"; kind: string; pagePath: string; message: string }]; reportPath: string }> {
+    this.lints.push(input);
+    return {
+      findings: [{ severity: "warning", kind: "stale_source_ref", pagePath: "wiki/pages/project.md", message: "source changed" }],
+      reportPath: "wiki/lint/latest.md"
+    };
   }
 }
 

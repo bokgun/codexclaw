@@ -84,6 +84,40 @@ export function parseSlashCommand(text: string): ParseCommandResult {
     return { error: "usage: /prefs show|set|unset" };
   }
 
+  if (command === "wiki") {
+    const action = args[0];
+    if (action === "ingest") {
+      const parsed = parseWikiIngestArgs(args.slice(1));
+      if (!parsed) return { error: "usage: /wiki ingest [--public|--private] [--slug <slug>] <path...> [--focus <text>]" };
+      return { command: { kind: "wiki", action, ...parsed } };
+    }
+    if (action === "note") {
+      const parsed = parseWikiNoteArgs(args.slice(1));
+      if (!parsed) return { error: "usage: /wiki note [--public|--private] <title> <body>" };
+      return { command: { kind: "wiki", action, ...parsed } };
+    }
+    if (action === "capture-selected") {
+      const parsed = parseWikiCaptureArgs(args.slice(1));
+      if (!parsed) return { error: "usage: /wiki capture-selected [--public|--private] [--slug <slug>] <selected text>" };
+      return { command: { kind: "wiki", action, ...parsed } };
+    }
+    if (action === "query") {
+      const parsed = parseWikiQueryArgs(args.slice(1));
+      if (!parsed) return { error: "usage: /wiki query [--limit <n>] <query>" };
+      return { command: { kind: "wiki", action, ...parsed } };
+    }
+    if (action === "with") {
+      const parsed = parseWikiWithArgs(args.slice(1));
+      if (!parsed) return { error: "usage: /wiki with [--limit <n>] <query> -- <message>" };
+      return { command: { kind: "wiki", action, ...parsed } };
+    }
+    if (action === "lint") {
+      if (args.length > 2 || (args[1] && args[1] !== "--write-report")) return { error: "usage: /wiki lint [--write-report]" };
+      return { command: { kind: "wiki", action, writeReport: args[1] === "--write-report" } };
+    }
+    return { error: "usage: /wiki ingest|note|capture-selected|query|with|lint" };
+  }
+
   if (command === "quit" || command === "exit") {
     if (args.length > 0) return { error: `usage: ${rawCommand}` };
     return { command: { kind: "quit" } };
@@ -112,4 +146,114 @@ function looksLikeCronParts(parts: string[]): boolean {
 
 export function isValidThreadLabel(label: string): boolean {
   return LABEL_PATTERN.test(label);
+}
+
+function parseWikiIngestArgs(args: string[]):
+  | { paths: readonly string[]; visibility: "project_public" | "user_private"; slug?: string; focus?: string }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  let slug: string | undefined;
+  let focus: string | undefined;
+  const paths: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--public") {
+      visibility = "project_public";
+      continue;
+    }
+    if (arg === "--private") {
+      visibility = "user_private";
+      continue;
+    }
+    if (arg === "--slug") {
+      slug = args[index + 1];
+      index += 1;
+      if (!slug || !isValidWikiSlug(slug)) return undefined;
+      continue;
+    }
+    if (arg === "--focus") {
+      focus = args.slice(index + 1).join(" ").trim();
+      if (!focus) return undefined;
+      break;
+    }
+    if (!arg || arg.startsWith("--")) return undefined;
+    paths.push(arg);
+  }
+  if (paths.length === 0) return undefined;
+  return { paths, visibility, slug, focus };
+}
+
+function parseWikiNoteArgs(args: string[]):
+  | { title: string; body: string; visibility: "project_public" | "user_private" }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  const rest = [...args];
+  while (rest[0] === "--public" || rest[0] === "--private") {
+    visibility = rest.shift() === "--public" ? "project_public" : "user_private";
+  }
+  const title = rest.shift();
+  const body = rest.join(" ").trim();
+  if (!title || !body) return undefined;
+  return { title, body, visibility };
+}
+
+function parseWikiCaptureArgs(args: string[]):
+  | { text: string; visibility: "project_public" | "user_private"; slug?: string }
+  | undefined {
+  let visibility: "project_public" | "user_private" = "user_private";
+  let slug: string | undefined;
+  const rest: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--public") {
+      visibility = "project_public";
+      continue;
+    }
+    if (arg === "--private") {
+      visibility = "user_private";
+      continue;
+    }
+    if (arg === "--slug") {
+      slug = args[index + 1];
+      index += 1;
+      if (!slug || !isValidWikiSlug(slug)) return undefined;
+      continue;
+    }
+    rest.push(arg);
+  }
+  const text = rest.join(" ").trim();
+  if (!text) return undefined;
+  return { text, visibility, slug };
+}
+
+function parseWikiQueryArgs(args: string[]): { query: string; limit?: number } | undefined {
+  let limit: number | undefined;
+  const rest: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--limit") {
+      const value = Number.parseInt(args[index + 1] ?? "", 10);
+      index += 1;
+      if (!Number.isInteger(value) || value < 1 || value > 20) return undefined;
+      limit = value;
+      continue;
+    }
+    rest.push(arg);
+  }
+  const query = rest.join(" ").trim();
+  if (!query) return undefined;
+  return { query, limit };
+}
+
+function parseWikiWithArgs(args: string[]): { query: string; message: string; limit?: number } | undefined {
+  const separator = args.indexOf("--");
+  if (separator <= 0 || separator === args.length - 1) return undefined;
+  const query = parseWikiQueryArgs(args.slice(0, separator));
+  const message = args.slice(separator + 1).join(" ").trim();
+  if (!query || !message) return undefined;
+  return { ...query, message };
+}
+
+function isValidWikiSlug(slug: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(slug) && !slug.includes("..");
 }

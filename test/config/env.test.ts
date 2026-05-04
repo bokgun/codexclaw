@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { getDiscordConfig, getTelegramConfig, redactDiscordSecrets, redactTelegramSecrets } from "../../src/config/env.js";
+import { getDiscordConfig, getTelegramConfig, getWikiConfig, redactDiscordSecrets, redactTelegramSecrets } from "../../src/config/env.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -83,5 +83,32 @@ describe("Discord config", () => {
 
     process.env.CODEXCLAW_DISCORD_GATEWAY_URL = "ws://127.0.0.1:9000/gateway";
     expect(getDiscordConfig().gatewayUrl).toBe("ws://127.0.0.1:9000/gateway");
+  });
+});
+
+describe("Wiki config", () => {
+  test("loads optional wiki settings with bounded limits", () => {
+    process.env.CODEXCLAW_WIKI_ENABLED = "true";
+    process.env.CODEXCLAW_WIKI_ROOT = "knowledge";
+    process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS = "docs,README.md";
+    process.env.CODEXCLAW_WIKI_MAX_SOURCE_BYTES = "4096";
+    process.env.CODEXCLAW_WIKI_MAX_QUERY_RESULTS = "3";
+    process.env.CODEXCLAW_WIKI_MAX_EXCERPT_CHARS = "300";
+
+    const config = getWikiConfig();
+
+    expect(config).toEqual({
+      enabled: true,
+      wikiRoot: "knowledge",
+      allowedSourceRoots: ["docs", "README.md"],
+      maxSourceBytes: 4096,
+      maxQueryResults: 3,
+      maxExcerptChars: 300
+    });
+  });
+
+  test("rejects out-of-range wiki limits", () => {
+    process.env.CODEXCLAW_WIKI_MAX_QUERY_RESULTS = "100";
+    expect(() => getWikiConfig()).toThrow("CODEXCLAW_WIKI_MAX_QUERY_RESULTS");
   });
 });

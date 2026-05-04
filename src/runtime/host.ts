@@ -4,9 +4,10 @@ import { dirname } from "node:path";
 import { ApprovalBridge } from "../approval/approval-bridge.js";
 import { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CodexWsClient } from "../codex/ws-client.js";
-import { getCodexConnectionConfig, getSchedulerConfig } from "../config/env.js";
+import { getCodexConnectionConfig, getSchedulerConfig, getWikiConfig } from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { ThreadManager } from "../thread/thread-manager.js";
+import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
 import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
 import { EventDispatcher } from "./events.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
@@ -22,6 +23,7 @@ export interface HostRuntimeOptions {
   branchSuggestions?: BranchSuggestionOptions | false;
   approvalModifyTtlMs?: number;
   scheduler?: false | Partial<Omit<SchedulerOptions, "store" | "router" | "channel" | "logger" | "channelSink">>;
+  wiki?: false | ReturnType<typeof createWikiCommandService>;
 }
 
 type BranchSuggestionChannel = ChannelAdapter & {
@@ -76,6 +78,7 @@ export class HostRuntime {
     const threads = new ThreadManager(this.store, this.codex);
     this.router = new Router(threads, this.codex, sink, {
       store: this.store,
+      wiki: this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService(),
       channel: this.channel.name,
       minScheduleIntervalMs: this.schedulerOptions === false ? undefined : this.schedulerOptions.minScheduleIntervalMs,
       defaultTaskRetry: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultRetry,
@@ -235,6 +238,12 @@ async function connectTransport(): Promise<CodexWsClient> {
   const client = new CodexWsClient({ url: wsUrl, tokenFile });
   await client.connect();
   return client;
+}
+
+function createConfiguredWikiService(): ReturnType<typeof createWikiCommandService> | undefined {
+  const envConfig = getWikiConfig();
+  if (!envConfig.enabled) return undefined;
+  return createWikiCommandService(createWikiConfig(envConfig));
 }
 
 function delay(ms: number): Promise<void> {

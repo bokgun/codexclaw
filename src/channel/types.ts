@@ -27,6 +27,12 @@ export type ChannelCommand =
   | { kind: "prefs"; action: "show" }
   | { kind: "prefs"; action: "set"; key: "lang" | "tone" | "verbosity"; value: string }
   | { kind: "prefs"; action: "unset"; key: "lang" | "tone" | "verbosity" }
+  | { kind: "wiki"; action: "ingest"; paths: readonly string[]; visibility: "project_public" | "user_private"; slug?: string; focus?: string }
+  | { kind: "wiki"; action: "note"; title: string; body: string; visibility: "project_public" | "user_private" }
+  | { kind: "wiki"; action: "capture-selected"; text: string; visibility: "project_public" | "user_private"; slug?: string }
+  | { kind: "wiki"; action: "query"; query: string; limit?: number }
+  | { kind: "wiki"; action: "with"; query: string; message: string; limit?: number }
+  | { kind: "wiki"; action: "lint"; writeReport: boolean }
   | { kind: "quit" };
 
 export type ParsedChannelInput =

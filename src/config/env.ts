@@ -43,6 +43,15 @@ export interface SchedulerConfig {
   minScheduleIntervalMs: number;
 }
 
+export interface WikiConfig {
+  enabled: boolean;
+  wikiRoot: string;
+  allowedSourceRoots: readonly string[];
+  maxSourceBytes: number;
+  maxQueryResults: number;
+  maxExcerptChars: number;
+}
+
 export function loadDotenv(path = ".env"): void {
   if (!existsSync(path)) return;
 
@@ -173,6 +182,19 @@ export function getSchedulerConfig(): SchedulerConfig {
     defaultTimeoutSec: parseBoundedInteger("CODEXCLAW_SCHEDULER_DEFAULT_TIMEOUT_SEC", 300, 1, 86_400),
     failureThreshold: parseBoundedInteger("CODEXCLAW_SCHEDULER_FAILURE_THRESHOLD", 5, 1, 50),
     minScheduleIntervalMs: parseBoundedInteger("CODEXCLAW_SCHEDULER_MIN_INTERVAL_MS", 60_000, 1_000, 86_400_000)
+  };
+}
+
+export function getWikiConfig(): WikiConfig {
+  loadDotenv();
+
+  return {
+    enabled: parseBoolean(process.env.CODEXCLAW_WIKI_ENABLED),
+    wikiRoot: process.env.CODEXCLAW_WIKI_ROOT?.trim() || "wiki",
+    allowedSourceRoots: parseCsv(process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS ?? "."),
+    maxSourceBytes: parseBoundedInteger("CODEXCLAW_WIKI_MAX_SOURCE_BYTES", 128 * 1024, 1, 2 * 1024 * 1024),
+    maxQueryResults: parseBoundedInteger("CODEXCLAW_WIKI_MAX_QUERY_RESULTS", 5, 1, 20),
+    maxExcerptChars: parseBoundedInteger("CODEXCLAW_WIKI_MAX_EXCERPT_CHARS", 500, 80, 5_000)
   };
 }
 

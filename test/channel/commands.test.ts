@@ -44,4 +44,61 @@ describe("parseSlashCommand", () => {
     });
     expect(parseSlashCommand("/prefs unset lang").command).toEqual({ kind: "prefs", action: "unset", key: "lang" });
   });
+
+  test("parses wiki commands", () => {
+    expect(parseSlashCommand("/wiki ingest --public --slug project docs/ROADMAP.md README.md").command).toEqual({
+      kind: "wiki",
+      action: "ingest",
+      paths: ["docs/ROADMAP.md", "README.md"],
+      visibility: "project_public",
+      slug: "project",
+      focus: undefined
+    });
+    expect(parseSlashCommand("/wiki ingest README.md --focus runtime design").command).toEqual({
+      kind: "wiki",
+      action: "ingest",
+      paths: ["README.md"],
+      visibility: "user_private",
+      slug: undefined,
+      focus: "runtime design"
+    });
+    expect(parseSlashCommand("/wiki note decision Use markdown wiki").command).toEqual({
+      kind: "wiki",
+      action: "note",
+      title: "decision",
+      body: "Use markdown wiki",
+      visibility: "user_private"
+    });
+    expect(parseSlashCommand("/wiki capture-selected --slug today selected summary").command).toEqual({
+      kind: "wiki",
+      action: "capture-selected",
+      text: "selected summary",
+      visibility: "user_private",
+      slug: "today"
+    });
+    expect(parseSlashCommand("/wiki query --limit 3 router design").command).toEqual({
+      kind: "wiki",
+      action: "query",
+      query: "router design",
+      limit: 3
+    });
+    expect(parseSlashCommand("/wiki with --limit 2 router design -- explain it").command).toEqual({
+      kind: "wiki",
+      action: "with",
+      query: "router design",
+      message: "explain it",
+      limit: 2
+    });
+    expect(parseSlashCommand("/wiki lint --write-report").command).toEqual({
+      kind: "wiki",
+      action: "lint",
+      writeReport: true
+    });
+  });
+
+  test("rejects malformed wiki commands", () => {
+    expect(parseSlashCommand("/wiki ingest").error).toBe("usage: /wiki ingest [--public|--private] [--slug <slug>] <path...> [--focus <text>]");
+    expect(parseSlashCommand("/wiki query --limit 100 x").error).toBe("usage: /wiki query [--limit <n>] <query>");
+    expect(parseSlashCommand("/wiki nope").error).toBe("usage: /wiki ingest|note|capture-selected|query|with|lint");
+  });
 });
