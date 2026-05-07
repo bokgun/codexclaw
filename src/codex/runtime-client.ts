@@ -3,8 +3,42 @@ import type { CodexWsClient, JsonObject, JsonValue, RpcNotification, RpcServerRe
 import { CapabilityError } from "../runtime/errors.js";
 import type { RuntimeEvent, ThreadId, TurnId } from "../runtime/types.js";
 
+export interface CodexThreadListParams {
+  cursor?: string | null;
+  limit?: number | null;
+  archived?: boolean | null;
+  cwd?: string | readonly string[] | null;
+  useStateDbOnly?: boolean;
+}
+
+export interface CodexThreadMetadata {
+  id: string;
+  status: unknown;
+  cwd: string;
+  archived?: boolean;
+  turns?: readonly unknown[];
+}
+
+export interface CodexThreadListResponse {
+  data: CodexThreadMetadata[];
+  nextCursor: string | null;
+  backwardsCursor?: string | null;
+}
+
+export interface CodexThreadReadResponse {
+  thread: CodexThreadMetadata;
+}
+
+export interface ThreadCapabilityProbeResult {
+  list: boolean;
+  archiveExternallyVerified: boolean;
+  unarchiveExternallyVerified: boolean;
+  notFoundShape?: string;
+}
+
 export const CODEX_METHODS = {
   threadStart: "thread/start",
+  threadList: "thread/list",
   threadRead: "thread/read",
   threadResume: "thread/resume",
   threadFork: "thread/fork",
@@ -18,15 +52,16 @@ export const CODEX_METHODS = {
 
 export class CodexRuntimeClient {
   private readonly eventHandlers = new Set<(event: RuntimeEvent) => void>();
-  private readonly capabilities: { forkThread: boolean; archiveThread: boolean };
+  private readonly capabilities: { forkThread: boolean; archiveThread: boolean; unarchiveThread: boolean };
 
   constructor(
     private readonly transport: CodexWsClient,
-    options: { capabilities?: Partial<{ forkThread: boolean; archiveThread: boolean }> } = {}
+    options: { capabilities?: Partial<{ forkThread: boolean; archiveThread: boolean; unarchiveThread: boolean }> } = {}
   ) {
     this.capabilities = {
       forkThread: options.capabilities?.forkThread ?? false,
-      archiveThread: options.capabilities?.archiveThread ?? false
+      archiveThread: options.capabilities?.archiveThread ?? false,
+      unarchiveThread: options.capabilities?.unarchiveThread ?? false
     };
     this.transport.onNotification((notification) => this.handleNotification(notification));
     this.transport.onServerRequest((request) => this.handleServerRequest(request));
@@ -53,6 +88,10 @@ export class CodexRuntimeClient {
     return this.capabilities.archiveThread;
   }
 
+  canUnarchiveThread(): boolean {
+    return this.capabilities.unarchiveThread;
+  }
+
   async startThread(params: JsonObject = {}): Promise<ThreadId> {
     const response = (await this.transport.request(CODEX_METHODS.threadStart, params)) as JsonObject;
     const threadId = readThreadId(response);
@@ -62,6 +101,38 @@ export class CodexRuntimeClient {
 
   async readThread(threadId: ThreadId, includeTurns = false): Promise<JsonValue> {
     return this.transport.request(CODEX_METHODS.threadRead, { threadId, includeTurns });
+  }
+
+  async readThreadMetadata(threadId: ThreadId): Promise<CodexThreadReadResponse> {
+    return (await this.transport.request(CODEX_METHODS.threadRead, { threadId, includeTurns: false })) as unknown as CodexThreadReadResponse;
+  }
+
+  async listThreads(params: CodexThreadListParams): Promise<CodexThreadListResponse> {
+    return (await this.transport.request(CODEX_METHODS.threadList, params as JsonObject)) as unknown as CodexThreadListResponse;
+  }
+
+  async probeThreadCapabilities(workspaceRoot: string): Promise<ThreadCapabilityProbeResult> {
+    const result: ThreadCapabilityProbeResult = {
+      list: false,
+      archiveExternallyVerified: this.capabilities.archiveThread,
+      unarchiveExternallyVerified: this.capabilities.unarchiveThread
+    };
+
+    try {
+      await this.listThreads({ archived: false, cwd: workspaceRoot, limit: 1, useStateDbOnly: false });
+      await this.listThreads({ archived: true, cwd: workspaceRoot, limit: 1, useStateDbOnly: false });
+      result.list = true;
+    } catch {
+      return result;
+    }
+
+    try {
+      await this.readThreadMetadata(`codexclaw-missing-${crypto.randomUUID()}`);
+    } catch (error) {
+      result.notFoundShape = boundedErrorShape(error);
+    }
+
+    return result;
   }
 
   async resumeThread(threadId: ThreadId, excludeTurns = true): Promise<JsonValue> {
@@ -86,6 +157,9 @@ export class CodexRuntimeClient {
   }
 
   async unarchiveThread(threadId: ThreadId): Promise<void> {
+    if (!this.capabilities.unarchiveThread) {
+      throw new CapabilityError("thread/unarchive is not enabled because M4b has not verified it for this app-server");
+    }
     await this.transport.request(CODEX_METHODS.threadUnarchive, { threadId });
   }
 
@@ -204,4 +278,9 @@ function asObject(value: JsonValue | undefined): JsonObject {
 function readString(object: JsonObject, key: string): string | undefined {
   const value = object[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function boundedErrorShape(error: unknown): string {
+  if (error instanceof Error) return `${error.name}:${error.message}`.slice(0, 160);
+  return String(error).slice(0, 160);
 }

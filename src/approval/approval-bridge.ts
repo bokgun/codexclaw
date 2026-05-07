@@ -106,7 +106,8 @@ export class ApprovalBridge {
       return true;
     }
 
-    await this.promptPending(pending);
+    const prompted = await this.safePromptPending(pending);
+    if (!prompted) await this.promoteNext(threadId);
     return true;
   }
 
@@ -171,7 +172,11 @@ export class ApprovalBridge {
     this.resolvePending(pending, routed.codexDecision === "accept", "approval_resolved");
 
     if (routed.followUpText) {
-      await this.router.enqueueFollowUp(pending.thread, buildModifyFollowUp(pending.context, routed.followUpText));
+      void this.enqueueModifyFollowUp(pending.thread, buildModifyFollowUp(pending.context, routed.followUpText), {
+        userKey: pending.userKey,
+        channelThreadKey: pending.channelThreadKey,
+        replyToMessageId: pending.channelMessageId
+      });
     }
 
     await this.promoteNext(pending.thread.threadId);
@@ -245,6 +250,7 @@ export class ApprovalBridge {
 
   private async promptPending(pending: PendingRuntimeApproval): Promise<void> {
     const expiresAt = new Date(this.now().getTime() + this.ttlMs).toISOString();
+    this.activeByThread.set(pending.thread.threadId, pending.approvalId);
     const promptResult = await this.channel.requestApproval({
       approvalId: pending.approvalId,
       userKey: pending.userKey,
@@ -258,7 +264,6 @@ export class ApprovalBridge {
     const channelMessageId = promptResult.channelMessageId ?? pending.approvalId;
     pending.channelMessageId = channelMessageId;
     pending.expiresAt = expiresAt;
-    this.activeByThread.set(pending.thread.threadId, pending.approvalId);
     this.store.savePendingApproval({
       channelMsgId: channelMessageId,
       userKey: pending.userKey,
@@ -350,8 +355,45 @@ export class ApprovalBridge {
 
     this.modifyWaits.delete(approvalId);
     this.tombstones.set(approvalId, { userKey: wait.userKey, reason: "approval_modified" });
-    await this.router.enqueueFollowUp(wait.thread, buildModifyFollowUp(wait.context, modifyText));
+    void this.enqueueModifyFollowUp(wait.thread, buildModifyFollowUp(wait.context, modifyText), {
+      userKey: wait.userKey,
+      channelThreadKey: wait.channelThreadKey,
+      replyToMessageId: wait.channelMessageId
+    });
     return true;
+  }
+
+  private async enqueueModifyFollowUp(
+    thread: ThreadRecord,
+    text: string,
+    target: { userKey: string; channelThreadKey?: string; replyToMessageId?: string }
+  ): Promise<void> {
+    try {
+      await this.router.enqueueFollowUp(thread, text);
+    } catch (error) {
+      this.logger.warn("approval_modify_followup_rejected", {
+        threadId: thread.threadId,
+        userKey: thread.userKey,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      try {
+        await this.channel.send({
+          kind: "text",
+          channel: this.channel.name,
+          userKey: target.userKey,
+          channelThreadKey: target.channelThreadKey,
+          replyToMessageId: target.replyToMessageId,
+          text: error instanceof Error ? error.message : String(error),
+          attachments: [{ kind: "status", status: "rejected" }]
+        });
+      } catch (notifyError) {
+        this.logger.warn("approval_modify_followup_notify_failed", {
+          threadId: thread.threadId,
+          userKey: thread.userKey,
+          error: notifyError instanceof Error ? notifyError.message : String(notifyError)
+        });
+      }
+    }
   }
 
   private notifyModifyStatus(wait: ModifyWait, text: string, status = "modify_expired"): void {
@@ -370,7 +412,24 @@ export class ApprovalBridge {
     const queue = this.queuedByThread.get(threadId);
     const next = queue?.shift();
     if (!queue?.length) this.queuedByThread.delete(threadId);
-    if (next) await this.promptPending(next);
+    if (!next) return;
+    const prompted = await this.safePromptPending(next);
+    if (!prompted) await this.promoteNext(threadId);
+  }
+
+  private async safePromptPending(pending: PendingRuntimeApproval): Promise<boolean> {
+    try {
+      await this.promptPending(pending);
+      return true;
+    } catch (error) {
+      this.logger.warn("approval_prompt_failed", {
+        approvalId: pending.approvalId,
+        threadId: pending.thread.threadId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.resolvePending(pending, false, "approval_prompt_failed", { safe: true });
+      return false;
+    }
   }
 
   private findThread(threadId: string): ThreadRecord | undefined {

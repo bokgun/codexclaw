@@ -592,8 +592,16 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     const parsed = parseTextApprovalDecision(text);
     if (!parsed) return false;
 
-    const pending = this.findPendingApproval(author.id, message.channel_id);
-    if (!pending) return false;
+    const matches = this.findPendingApprovals(author.id, message.channel_id);
+    if (matches.length === 0) return false;
+    if (matches.length > 1) {
+      await this.api.sendMessage({
+        channel_id: message.channel_id,
+        content: "Multiple approvals are pending here. Use the buttons on the approval message."
+      });
+      return true;
+    }
+    const pending = matches[0]!;
     if (this.isExpired(pending.request.expiresAt)) {
       this.pendingApprovals.delete(pending.key);
       await this.api.sendMessage({ channel_id: message.channel_id, content: "Approval expired." });
@@ -775,8 +783,8 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     };
   }
 
-  private findPendingApproval(userId: string, channelId: string): PendingApproval | undefined {
-    return [...this.pendingApprovals.values()].find((pending) => pending.userId === userId && pending.channelId === channelId);
+  private findPendingApprovals(userId: string, channelId: string): PendingApproval[] {
+    return [...this.pendingApprovals.values()].filter((pending) => pending.userId === userId && pending.channelId === channelId);
   }
 
   private findPendingBranchSuggestion(userId: string, channelId: string): PendingBranchSuggestion | undefined {

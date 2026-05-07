@@ -63,6 +63,12 @@ export interface WikiConfig {
   maxExcerptChars: number;
 }
 
+export interface ThreadCapabilityConfig {
+  forkThread: boolean;
+  archiveThread: boolean;
+  unarchiveThread: boolean;
+}
+
 export function loadDotenv(path = ".env"): void {
   if (!existsSync(path)) return;
 
@@ -249,6 +255,14 @@ export function getWikiConfig(): WikiConfig {
     maxSourceBytes: parseBoundedInteger("CODEXCLAW_WIKI_MAX_SOURCE_BYTES", 128 * 1024, 1, 2 * 1024 * 1024),
     maxQueryResults: parseBoundedInteger("CODEXCLAW_WIKI_MAX_QUERY_RESULTS", 5, 1, 20),
     maxExcerptChars: parseBoundedInteger("CODEXCLAW_WIKI_MAX_EXCERPT_CHARS", 500, 80, 5_000)
+  };
+}
+
+export function getThreadCapabilityConfig(): ThreadCapabilityConfig {
+  return {
+    forkThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_FORK),
+    archiveThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_ARCHIVE),
+    unarchiveThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_UNARCHIVE)
   };
 }
 

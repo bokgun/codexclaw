@@ -98,6 +98,28 @@ describe("BranchSuggestionCoordinator", () => {
     store.close();
   });
 
+  test("suppresses suggestions for non-active active-label pointers", async () => {
+    const store = createPointerStore();
+    store.upsertThread({
+      userKey: "user:1",
+      label: "default",
+      threadId: "thread-1",
+      status: "quarantined",
+      makeActive: true,
+      lastRoutedAt: "2026-05-01T00:00:00.000Z"
+    });
+    const sink = new MemorySink();
+    const coordinator = new BranchSuggestionCoordinator(store, sink, {
+      now: () => new Date("2026-05-01T05:00:00.000Z")
+    });
+
+    const held = await coordinator.maybeHold(message("resume work"));
+
+    expect(held).toBe(false);
+    expect(sink.events).toEqual([]);
+    store.close();
+  });
+
   test("drops held message bodies when branch suggestion ttl expires", async () => {
     const store = createPointerStore();
     store.upsertThread({

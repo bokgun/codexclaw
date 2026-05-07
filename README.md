@@ -58,6 +58,7 @@ Required environment:
 - `CODEXCLAW_STATE_DIR`: codexclaw-owned state directory. Defaults to `~/.codexclaw`, supports `~/.codexclaw/...`, and is created with private permissions. Workspace-internal state requires explicit `CODEXCLAW_DEPLOYMENT_MODE=local_dev` and `CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE=true`.
 - `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `<state-dir>/codex.token`, which `bun run start:codex` creates automatically for local development. Relative paths resolve from the state dir.
 - `CODEXCLAW_DB`: SQLite database path for codexclaw pointers, approvals, tasks, and prefs. Defaults to `<state-dir>/codexclaw.sqlite`. Relative paths resolve from the state dir.
+- `CODEXCLAW_VERIFIED_THREAD_FORK`, `CODEXCLAW_VERIFIED_THREAD_ARCHIVE`, `CODEXCLAW_VERIFIED_THREAD_UNARCHIVE`: keep false unless an external spike has verified the pinned app-server mutating thread methods in your environment. codexclaw's boot probe stays metadata-only and does not create, archive, or unarchive disposable threads.
 
 `CODEXCLAW_WORKSPACE_ROOT` and `CODEXCLAW_STATE_DIR` are intentionally
 separate. The workspace is the project Codex can inspect and edit; the state

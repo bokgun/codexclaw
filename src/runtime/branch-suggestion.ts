@@ -52,6 +52,7 @@ export class BranchSuggestionCoordinator {
 
     const active = this.store.getActiveThread(message.userKey);
     if (!active || !active.lastRoutedAt) return false;
+    if (active.status !== "active") return false;
 
     const now = this.now();
     if (!isBeforeOrEqual(active.lastRoutedAt, new Date(now.getTime() - this.idleMs).toISOString())) return false;

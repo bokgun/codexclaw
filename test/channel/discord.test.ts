@@ -276,6 +276,50 @@ describe("DiscordChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("rejects ambiguous local text approval responses when multiple prompts are pending", async () => {
+    const api = new FakeDiscordApi();
+    let keyIndex = 0;
+    const adapter = new DiscordChannelAdapter({
+      config: discordConfig(),
+      apiClient: api,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+      keyFactory: () => `k${++keyIndex}`,
+      startInteractionServer: false
+    });
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.requestApproval({
+      approvalId: "approval-1",
+      userKey: "discord:42",
+      threadId: "thread-1",
+      prompt: "Run first command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.requestApproval({
+      approvalId: "approval-2",
+      userKey: "discord:42",
+      threadId: "thread-1",
+      prompt: "Run second command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:05:00.000Z",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.processGatewayMessage({
+      id: "m1",
+      channel_id: "100",
+      content: "1",
+      author: { id: "42" }
+    });
+
+    const approval = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
+
+    expect(approval).toBe("none");
+    expect(api.sent.at(-1)?.content).toContain("Multiple approvals");
+    await adapter.close();
+  });
+
   test("maps Modify button to reject-style response plus modal follow-up text", async () => {
     const api = new FakeDiscordApi();
     const adapter = adapterWith(api);

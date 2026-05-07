@@ -4,7 +4,13 @@ import { dirname } from "node:path";
 import { ApprovalBridge } from "../approval/approval-bridge.js";
 import { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CodexWsClient } from "../codex/ws-client.js";
-import { getCodexConnectionConfig, getRuntimePathConfig, getSchedulerConfig, getWikiConfig } from "../config/env.js";
+import {
+  getCodexConnectionConfig,
+  getRuntimePathConfig,
+  getSchedulerConfig,
+  getThreadCapabilityConfig,
+  getWikiConfig
+} from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { ThreadManager } from "../thread/thread-manager.js";
 import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
@@ -13,6 +19,7 @@ import { EventDispatcher } from "./events.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
 import { Router } from "./router.js";
 import { SchedulerCoordinator, type SchedulerOptions } from "./scheduler.js";
+import { syncThreadPointers } from "./thread-sync.js";
 import type { BranchSuggestionResponse, ChannelName, ChannelSink, InboundMessage, OutboundEvent, UserKey } from "./types.js";
 
 export interface HostRuntimeOptions {
@@ -20,6 +27,7 @@ export interface HostRuntimeOptions {
   store?: PointerStore;
   logger?: RuntimeLogger;
   dbPath?: string;
+  connectTransport?: () => Promise<CodexWsClient>;
   branchSuggestions?: BranchSuggestionOptions | false;
   approvalModifyTtlMs?: number;
   scheduler?: false | Partial<Omit<SchedulerOptions, "store" | "router" | "channel" | "logger" | "channelSink">>;
@@ -39,7 +47,9 @@ export class HostRuntime {
   private readonly schedulerOptions: Exclude<HostRuntimeOptions["scheduler"], undefined>;
   private codex!: CodexRuntimeClient;
   private router!: Router;
+  private sink!: ChannelSink;
   private approvals!: ApprovalBridge;
+  private readonly threadTargets = new Map<string, { userKey: UserKey; channel: ChannelName; channelThreadKey?: string }>();
   private branchSuggestions?: BranchSuggestionCoordinator;
   private scheduler?: SchedulerCoordinator;
   private approvalExpiry?: ReturnType<typeof setInterval>;
@@ -60,9 +70,13 @@ export class HostRuntime {
   }
 
   async start(): Promise<void> {
-    const transport = await connectTransport();
-    this.installCodexClient(transport);
+    const transport = await this.connectTransport();
+    this.installCodexClient(transport, { connected: false });
+    await this.probeThreadCapabilities();
+    await this.syncKnownThreads();
     await this.resumeKnownActiveThreads();
+    this.router.setConnected(true);
+    this.startScheduler();
     this.approvalExpiry = setInterval(() => this.approvals.expirePending(), 5_000);
 
     const pumps = [this.pumpMessages(), this.pumpApprovals()];
@@ -71,12 +85,12 @@ export class HostRuntime {
     await Promise.all(pumps);
   }
 
-  private installCodexClient(transport: CodexWsClient): void {
-    this.codex = new CodexRuntimeClient(transport);
+  private installCodexClient(transport: CodexWsClient, options: { connected?: boolean } = {}): void {
+    this.codex = new CodexRuntimeClient(transport, { capabilities: getThreadCapabilityConfig() });
     const sink = new ChannelAdapterSink(this.channel);
+    this.sink = sink;
     const dispatcher = new EventDispatcher(sink, this.logger);
-    const threadTargets = new Map<string, { userKey: UserKey; channel: ChannelName; channelThreadKey?: string }>();
-    const threads = new ThreadManager(this.store, this.codex);
+    const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: getRuntimePathConfig().workspaceRoot });
     this.router = new Router(threads, this.codex, sink, {
       store: this.store,
       wiki: this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService(),
@@ -90,12 +104,12 @@ export class HostRuntime {
           channel: message.channel,
           channelThreadKey: message.channelThreadKey
         };
-        threadTargets.set(thread.threadId, target);
+        this.threadTargets.set(thread.threadId, target);
         dispatcher.bindThread(thread.threadId, target);
       }
     });
     this.approvals = new ApprovalBridge(this.store, this.codex, this.channel, this.router, this.logger, undefined, undefined, {
-      getThreadTarget: (threadId) => threadTargets.get(threadId),
+      getThreadTarget: (threadId) => this.threadTargets.get(threadId),
       modifyTtlMs: this.approvalModifyTtlMs
     });
     this.branchSuggestions =
@@ -108,6 +122,8 @@ export class HostRuntime {
       void this.approvals.handleRuntimeEvent(event);
       void dispatcher.dispatch(event);
     });
+    this.router.setConnected(options.connected ?? true);
+
     this.codex.onClose((error) => {
       this.router.setConnected(false);
       this.scheduler?.stop();
@@ -118,18 +134,6 @@ export class HostRuntime {
       void this.reconnect();
     });
 
-    this.scheduler?.stop();
-    if (this.schedulerOptions && this.schedulerOptions.enabled !== false) {
-      this.scheduler = new SchedulerCoordinator({
-        ...this.schedulerOptions,
-        store: this.store,
-        router: this.router,
-        channel: this.channel.name,
-        logger: this.logger,
-        channelSink: sink
-      });
-      this.scheduler.start();
-    }
   }
 
   close(): void {
@@ -159,7 +163,13 @@ export class HostRuntime {
 
   private async pumpApprovals(): Promise<void> {
     for await (const response of this.channel.approvalResponses) {
-      await this.approvals.handleChannelResponse(response);
+      try {
+        await this.approvals.handleChannelResponse(response);
+      } catch (error) {
+        this.logger.warn("approval_response_handling_failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   }
 
@@ -188,15 +198,18 @@ export class HostRuntime {
       try {
         await delay(delayMs);
         if (this.stopping) break;
-        const transport = await connectTransport();
+        const transport = await this.connectTransport();
         if (this.stopping) {
           transport.close();
           break;
         }
-        this.installCodexClient(transport);
+        this.installCodexClient(transport, { connected: false });
+        await this.probeThreadCapabilities();
+        await this.syncKnownThreads();
         await this.resumeKnownActiveThreads();
         if (this.stopping) break;
         this.router.setConnected(true);
+        this.startScheduler();
         this.logger.info("codex_reconnected");
         this.reconnecting = false;
         return;
@@ -211,7 +224,7 @@ export class HostRuntime {
   }
 
   private async resumeKnownActiveThreads(): Promise<void> {
-    const threads = new ThreadManager(this.store, this.codex);
+    const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: getRuntimePathConfig().workspaceRoot });
     for (const thread of this.store.listAllThreads().filter((record) => record.isActive && record.status === "active")) {
       const resumed = await threads.tryResumeThread(thread);
       if (!resumed) {
@@ -222,6 +235,52 @@ export class HostRuntime {
         });
       }
     }
+  }
+
+  private async syncKnownThreads(): Promise<void> {
+    const paths = getRuntimePathConfig();
+    const result = await syncThreadPointers(this.store, this.codex, {
+      workspaceRoot: paths.workspaceRoot,
+      logger: this.logger
+    });
+    this.logger.info("thread_sync_completed", {
+      checkedPointers: result.checkedPointers,
+      markedActive: result.markedActive,
+      markedArchived: result.markedArchived,
+      markedMissing: result.markedMissing,
+      preservedQuarantined: result.preservedQuarantined,
+      warnings: result.warnings.length
+    });
+  }
+
+  private async probeThreadCapabilities(): Promise<void> {
+    const paths = getRuntimePathConfig();
+    const result = await this.codex.probeThreadCapabilities(paths.workspaceRoot);
+    this.logger.info("thread_capability_probe_completed", {
+      list: result.list,
+      archiveExternallyVerified: result.archiveExternallyVerified,
+      unarchiveExternallyVerified: result.unarchiveExternallyVerified,
+      notFoundShape: result.notFoundShape
+    });
+  }
+
+  private startScheduler(): void {
+    this.scheduler?.stop();
+    if (this.schedulerOptions && this.schedulerOptions.enabled !== false) {
+      this.scheduler = new SchedulerCoordinator({
+        ...this.schedulerOptions,
+        store: this.store,
+        router: this.router,
+        channel: this.channel.name,
+        logger: this.logger,
+        channelSink: this.sink
+      });
+      this.scheduler.start();
+    }
+  }
+
+  private connectTransport(): Promise<CodexWsClient> {
+    return this.hostOptions.connectTransport ? this.hostOptions.connectTransport() : connectTransport();
   }
 }
 

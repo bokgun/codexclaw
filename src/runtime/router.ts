@@ -147,6 +147,7 @@ export class Router {
         let turnId: string | undefined;
         let pendingTerminal: Extract<RuntimeEvent, { kind: "turn_completed" | "turn_failed" }> | undefined;
         try {
+          await this.threads.resumeThread(thread);
           let timedOut = false;
           let abortScheduled!: (error: Error) => void;
           const aborted = new Promise<Error>((resolve) => {
@@ -193,6 +194,10 @@ export class Router {
           });
           const started = this.codex.startTurn(thread.threadId, this.attachPrefs(input.userKey, input.text)).then((startedTurnId) => {
             turnId = startedTurnId;
+            if (timedOut) {
+              if (startedTurnId) void this.codex.interruptTurn(thread.threadId, startedTurnId).catch(() => undefined);
+              return startedTurnId;
+            }
             const waiter = this.scheduledWaiters.get(thread.threadId);
             if (waiter) waiter.turnId = startedTurnId;
             this.threads.markRouted(thread);
@@ -203,10 +208,14 @@ export class Router {
           });
           await Promise.race([started, timeoutReached]);
           if (timedOut && !turnId) {
-            const abortedStart = aborted.then((error) => {
-              throw error;
-            });
-            await Promise.race([started, abortedStart]);
+            void started.catch(() => undefined);
+            this.threads.quarantineThread(thread, "scheduled_start_timeout");
+            return {
+              taskId: input.taskId,
+              threadId: thread.threadId,
+              status: "timed_out",
+              reason: "Scheduled turn timed out before start was acknowledged."
+            };
           }
           if (timedOut && turnId) {
             await this.codex.interruptTurn(thread.threadId, turnId).catch(() => undefined);
@@ -271,6 +280,7 @@ export class Router {
 
   enqueueFollowUp(thread: ThreadRecord, text: string): Promise<void> {
     return this.queue.enqueue(thread.threadId, async () => {
+      await this.threads.resumeThread(thread);
       const turnId = await this.codex.startTurn(thread.threadId, text);
       this.threads.markRouted(thread);
       await this.queue.waitForTerminal(thread.threadId, turnId);
@@ -293,6 +303,10 @@ export class Router {
     const label = args.join(" ").trim();
 
     switch (command) {
+      case "/thread": {
+        await this.handleThreadCommand(message, args);
+        return;
+      }
       case "/new": {
         const thread = await this.threads.createThread(message.userKey, label || undefined);
         await this.sendText(message, `Created and switched to '${thread.label}'.`);
@@ -340,6 +354,44 @@ export class Router {
   }
 
   private readonly scheduledWaiters = new Map<string, ScheduledWaiter>();
+
+  private async handleThreadCommand(message: InboundMessage, args: string[]): Promise<void> {
+    const action = args[0];
+    const label = args.slice(1).join(" ").trim();
+    if (action === "new") {
+      const thread = await this.threads.createThread(message.userKey, label || undefined);
+      await this.sendText(message, `Created and switched to '${thread.label}'.`);
+      return;
+    }
+    if (action === "list" || action === "ls") {
+      const threads = this.threads.listThreads(message.userKey);
+      await this.sendText(
+        message,
+        threads.length === 0
+          ? "No known threads."
+          : threads.map((thread) => `${thread.isActive ? "*" : " "} ${thread.label} ${thread.status}`).join("\n")
+      );
+      return;
+    }
+    if (action === "switch") {
+      if (!label) throw new RoutingError("Usage: /thread switch <label>", "invalid_command");
+      const thread = await this.threads.switchThread(message.userKey, label);
+      await this.sendText(message, `Switched to '${thread.label}'.`);
+      return;
+    }
+    if (action === "branch") {
+      const thread = await this.threads.branchThread(message.userKey, label || `branch-${Date.now()}`);
+      await this.sendText(message, `Branched and switched to '${thread.label}'.`);
+      return;
+    }
+    if (action === "archive") {
+      if (!label) throw new RoutingError("Usage: /thread archive <label>", "invalid_command");
+      const thread = await this.threads.archiveThread(message.userKey, label);
+      await this.sendText(message, `Archived '${thread.label}'.`);
+      return;
+    }
+    throw new RoutingError("Usage: /thread new|list|switch|branch|archive", "invalid_command");
+  }
 
   private async handleTasksCommand(message: InboundMessage, args: string[]): Promise<void> {
     const store = this.options.store;

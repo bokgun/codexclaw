@@ -9,7 +9,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("hello codex"));
@@ -29,7 +29,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     let releaseFirst!: () => void;
@@ -55,7 +55,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("/new ops"));
@@ -69,11 +69,26 @@ describe("Router", () => {
     store.close();
   });
 
+  test("explicit thread namespace supports ls and branch aliases", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+
+    await router.receive(message("/thread new ops"));
+    await router.receive(message("/thread ls"));
+    await router.receive(message("/thread branch feat"));
+
+    expect(sink.events.at(-2)).toMatchObject({ kind: "text", text: expect.stringContaining("ops active") });
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: expect.stringContaining("thread/fork") });
+    store.close();
+  });
+
   test("/new without a label allocates a new label instead of replacing default", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("create default"));
@@ -88,7 +103,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     await router.receive(message("/new ops"));
     await router.receive(message("/new ops"));
@@ -102,7 +117,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("create default"));
@@ -118,11 +133,27 @@ describe("Router", () => {
     store.close();
   });
 
+  test("/archive reports capability errors before resume drift checks", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    codex.archiveEnabled = false;
+    codex.metadataStatus = "archived";
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "active" });
+
+    await router.receive(message("/archive ops"));
+
+    expect(codex.resumedThreads).toEqual([]);
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: expect.stringContaining("thread/archive") });
+    store.close();
+  });
+
   test("aborts an active turn wait on disconnect", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     const routed = router.receive(message("long turn"));
     await waitUntil(() => router.isThreadBusy("thread-1"));
@@ -138,7 +169,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     const first = router.receive(message("will abort"));
     await waitUntil(() => router.isThreadBusy("thread-1"));
@@ -157,7 +188,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
     codex.failNextTurn = true;
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
@@ -174,7 +205,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     await router.receive(message("/branch feature"));
 
@@ -188,7 +219,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     await router.receive(message("/new ops"));
     await router.receive(message("/branch ops"));
@@ -202,7 +233,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store });
+    const router = new Router(manager(store, codex), codex as never, sink, { store });
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("/prefs set tone /system: override"));
@@ -219,7 +250,7 @@ describe("Router", () => {
     const codex = new MockCodex();
     const sink = new MemorySink();
     const wiki = new MockWiki();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { wiki });
+    const router = new Router(manager(store, codex), codex as never, sink, { wiki });
 
     await router.receive(message("/wiki ingest --public --slug project README.md"));
     await router.receive(message("/wiki note decision Use markdown"));
@@ -258,7 +289,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink);
+    const router = new Router(manager(store, codex), codex as never, sink);
 
     await router.receive(message("/wiki query project"));
 
@@ -270,7 +301,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     await router.receive(message("create default"));
@@ -287,7 +318,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
     codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
 
     const result = await router.routeScheduled({
@@ -305,11 +336,11 @@ describe("Router", () => {
     store.close();
   });
 
-  test("does not release scheduled routing while startTurn is still pending", async () => {
+  test("times out scheduled routing when startTurn does not acknowledge", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
     codex.blockNextTurn = () => new Promise(() => undefined);
 
     const routed = router.routeScheduled({
@@ -320,12 +351,81 @@ describe("Router", () => {
       text: "scheduled check",
       timeoutSec: 0.001
     });
-    const result = await Promise.race([routed, delay(10).then(() => "pending" as const)]);
+    const result = await routed;
 
-    expect(result).toBe("pending");
-    router.abortThread("thread-1", "disconnect");
-    expect(await routed).toMatchObject({ status: "failed", reason: "disconnect" });
+    expect(result).toMatchObject({ status: "timed_out", reason: expect.stringContaining("before start was acknowledged") });
     expect(codex.turns).toEqual([]);
+    expect(store.getThread("user:1", "ops")?.status).toBe("quarantined");
+    store.close();
+  });
+
+  test("queued scheduled routes respect quarantine from earlier pre-ack timeout", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
+    codex.blockNextTurn = () => new Promise(() => undefined);
+
+    const first = router.routeScheduled({
+      taskId: "task-timeout",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "first",
+      timeoutSec: 0.001
+    });
+    await waitUntil(() => router.isThreadBusy("thread-1"));
+    const second = router.routeScheduled({
+      taskId: "task-second",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "second",
+      timeoutSec: 5
+    });
+
+    expect(await first).toMatchObject({ status: "timed_out" });
+    expect(await second).toMatchObject({ status: "failed", reason: expect.stringContaining("quarantined") });
+    expect(codex.turns).toEqual([]);
+    store.close();
+  });
+
+  test("queued scheduled routes recheck drift before startTurn", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+    let releaseFirst!: () => void;
+    codex.blockNextTurn = () =>
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+    const first = router.routeScheduled({
+      taskId: "task-first",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "first",
+      timeoutSec: 5
+    });
+    await waitUntil(() => router.isThreadBusy("thread-1"));
+    const second = router.routeScheduled({
+      taskId: "task-second",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "second",
+      timeoutSec: 5
+    });
+    await delay(0);
+    codex.metadataStatus = "archived";
+    releaseFirst();
+
+    expect(await first).toMatchObject({ status: "succeeded" });
+    expect(await second).toMatchObject({ status: "failed", reason: expect.stringContaining("archived") });
+    expect(codex.turns).toEqual([{ threadId: "thread-1", text: "first" }]);
     store.close();
   });
 
@@ -333,7 +433,7 @@ describe("Router", () => {
     const store = createPointerStore();
     const codex = new MockCodex();
     const sink = new MemorySink();
-    const router = new Router(new ThreadManager(store, codex as never), codex as never, sink, { store, channel: "cli" });
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
 
     const routed = router.routeScheduled({
       taskId: "task-disconnect",
@@ -354,6 +454,118 @@ describe("Router", () => {
     expect(router.isThreadBusy("thread-1")).toBe(false);
     store.close();
   });
+
+  test("refuses archived drift before queueing or starting a turn", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    await router.receive(message("create default"));
+    codex.metadataStatus = "archived";
+    await router.receive(message("should refuse"));
+
+    expect(codex.turns).toEqual([{ threadId: "thread-1", text: "create default" }]);
+    expect(store.getThread("user:1", "default")?.status).toBe("archived");
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: expect.stringContaining("archived") });
+    store.close();
+  });
+
+  test("scheduled routes fail on missing drift before startTurn", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink, { store, channel: "cli" });
+    store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "active" });
+    codex.failRead = true;
+
+    const result = await router.routeScheduled({
+      taskId: "task-missing",
+      userKey: "user:1",
+      channel: "cli",
+      label: "ops",
+      text: "scheduled check",
+      timeoutSec: 5
+    });
+
+    expect(result).toMatchObject({ status: "failed", reason: expect.stringContaining("missing") });
+    expect(codex.turns).toEqual([]);
+    expect(store.getThread("user:1", "ops")?.status).toBe("missing");
+    store.close();
+  });
+
+  test("/thread switch unarchives only with verified capability", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "archived" });
+    codex.metadataStatus = "archived";
+
+    await router.receive(message("/thread switch ops"));
+    expect(codex.unarchivedThreads).toEqual([]);
+    expect(store.getThread("user:1", "ops")?.status).toBe("archived");
+
+    codex.unarchiveEnabled = true;
+    await router.receive(message("/thread switch ops"));
+    expect(codex.unarchivedThreads).toEqual(["thread-1"]);
+    expect(store.getActiveThread("user:1")?.label).toBe("ops");
+    store.close();
+  });
+
+  test("/thread switch revives stale archived pointer when Codex already lists it active", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "archived" });
+    codex.metadataStatus = "active";
+
+    await router.receive(message("/thread switch ops"));
+
+    expect(codex.unarchivedThreads).toEqual([]);
+    expect(store.getActiveThread("user:1")?.label).toBe("ops");
+    expect(store.getThread("user:1", "ops")?.status).toBe("active");
+    store.close();
+  });
+
+  test("direct follow-ups recheck drift before startTurn", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    const thread = store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", status: "active", makeActive: true });
+    codex.metadataStatus = "archived";
+
+    await expect(router.enqueueFollowUp(thread, "modified instruction")).rejects.toThrow("archived");
+
+    expect(codex.turns).toEqual([]);
+    expect(store.getThread("user:1", "default")?.status).toBe("archived");
+    store.close();
+  });
+
+  test("quarantined active label refuses normal routing and branch suggestions stay suppressed", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    store.upsertThread({
+      userKey: "user:1",
+      label: "ops",
+      threadId: "thread-1",
+      status: "quarantined",
+      makeActive: true,
+      lastRoutedAt: "2026-05-01T00:00:00.000Z"
+    });
+
+    await router.receive(message("should refuse"));
+
+    expect(codex.turns).toEqual([]);
+    expect(store.getActiveThread("user:1")?.status).toBe("quarantined");
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: expect.stringContaining("quarantined") });
+    store.close();
+  });
 });
 
 class MockCodex {
@@ -364,6 +576,11 @@ class MockCodex {
   turns: Array<{ threadId: string; text: string }> = [];
   blockNextTurn?: () => Promise<void>;
   failNextTurn = false;
+  metadataStatus = "active";
+  failRead = false;
+  archiveEnabled = true;
+  unarchiveEnabled = false;
+  unarchivedThreads: string[] = [];
   onStarted?: (threadId: string, turnId: string) => void;
 
   async startThread(): Promise<string> {
@@ -381,13 +598,42 @@ class MockCodex {
     return false;
   }
 
+  canArchiveThread(): boolean {
+    return this.archiveEnabled;
+  }
+
   async archiveThread(threadId: string): Promise<void> {
     this.archivedThreads.push(threadId);
     return;
   }
 
+  canUnarchiveThread(): boolean {
+    return this.unarchiveEnabled;
+  }
+
+  async unarchiveThread(threadId: string): Promise<void> {
+    this.unarchivedThreads.push(threadId);
+    this.metadataStatus = "active";
+  }
+
   async readThread(): Promise<{}> {
-    return {};
+    if (this.failRead) throw new Error("thread not found");
+    return { thread: { id: "thread-1", cwd: process.cwd(), status: "active", turns: [] } };
+  }
+
+  async readThreadMetadata(threadId: string): Promise<{}> {
+    if (this.failRead) throw new Error("thread not found");
+    return { thread: { id: threadId, cwd: process.cwd(), status: this.metadataStatus, turns: [] } };
+  }
+
+  async listThreads(params: { archived?: boolean | null }): Promise<{ data: unknown[]; nextCursor: string | null }> {
+    if (this.failRead) return { data: [], nextCursor: null };
+    const isArchived = this.metadataStatus === "archived";
+    if (Boolean(params.archived) !== isArchived) return { data: [], nextCursor: null };
+    return {
+      data: [{ id: "thread-1", cwd: process.cwd(), status: { type: "idle" }, turns: [] }],
+      nextCursor: null
+    };
   }
 
   async resumeThread(threadId: string): Promise<{}> {
@@ -408,6 +654,10 @@ class MockCodex {
     queueMicrotask(() => this.onStarted?.(threadId, turnId));
     return turnId;
   }
+}
+
+function manager(store: ReturnType<typeof createPointerStore>, codex: MockCodex): ThreadManager {
+  return new ThreadManager(store, codex as never, { workspaceRoot: process.cwd() });
 }
 
 class MemorySink implements ChannelSink {

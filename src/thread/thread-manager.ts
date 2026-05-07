@@ -1,12 +1,15 @@
 import type { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CapabilityError, RoutingError } from "../runtime/errors.js";
+import { getRuntimePathConfig } from "../config/env.js";
+import { assertThreadRoutable, readObservedThreadState } from "../runtime/thread-sync.js";
 import type { ThreadLabel, ThreadRecord, UserKey } from "../runtime/types.js";
 import type { PointerStore } from "../store/pointer-store.js";
 
 export class ThreadManager {
   constructor(
     private readonly store: PointerStore,
-    private readonly codex: CodexRuntimeClient
+    private readonly codex: CodexRuntimeClient,
+    private readonly options: { workspaceRoot?: string } = {}
   ) {}
 
   async ensureDefaultThread(userKey: UserKey): Promise<ThreadRecord> {
@@ -51,6 +54,11 @@ export class ThreadManager {
     const normalized = normalizeLabel(label);
     const target = this.store.getThread(userKey, normalized);
     if (!target) throw new RoutingError(`Unknown thread label '${normalized}'`, "thread_not_found");
+    if (target.status === "archived") {
+      await this.recoverArchivedThread(target);
+      await this.resumeThread({ ...target, status: "active" });
+      return this.store.setActiveThread(userKey, normalized);
+    }
     await this.resumeThread(target);
     return this.store.setActiveThread(userKey, normalized);
   }
@@ -78,14 +86,27 @@ export class ThreadManager {
     const normalized = normalizeLabel(label);
     const target = this.store.getThread(userKey, normalized);
     if (!target) throw new RoutingError(`Unknown thread label '${normalized}'`, "thread_not_found");
-
-    const fallback = this.store
-      .listThreads(userKey)
-      .find((thread) => thread.label !== normalized && thread.status === "active");
-    if (target.isActive && !fallback && normalized === "default") {
-      throw new RoutingError("Cannot archive the only active default thread. Create or switch to another label first.", "thread_not_routable");
+    if (target.status !== "active") {
+      throw new RoutingError(`Thread '${normalized}' is ${target.status}; only active labels can be archived.`, "thread_not_routable");
+    }
+    if (!this.codex.canArchiveThread()) {
+      throw new CapabilityError("thread/archive is not enabled because M0 has not verified it for this app-server");
     }
 
+    let fallback = this.store
+      .listThreads(userKey)
+      .find((thread) => thread.label !== normalized && thread.status === "active");
+    if (target.isActive && !fallback) {
+      if (normalized === "default") {
+        throw new RoutingError("Cannot archive the only active default thread. Create or switch to another label first.", "thread_not_routable");
+      }
+      if (this.store.getThread(userKey, "default")) {
+        throw new RoutingError("Cannot archive the only active thread while default is unavailable. Create or switch to another active label first.", "thread_not_routable");
+      }
+      fallback = await this.createThread(userKey, "default");
+    }
+
+    await this.resumeThread(target);
     await this.codex.archiveThread(target.threadId);
     const archived = this.store.markThreadStatus(userKey, normalized, "archived");
 
@@ -101,6 +122,7 @@ export class ThreadManager {
   }
 
   async resolveRoutableThread(userKey: UserKey): Promise<ThreadRecord> {
+    const existingActive = this.store.getActiveThread(userKey);
     const thread = await this.ensureDefaultThread(userKey);
     if (thread.status !== "active") {
       throw new RoutingError(
@@ -108,6 +130,7 @@ export class ThreadManager {
         "thread_not_routable"
       );
     }
+    if (existingActive?.threadId === thread.threadId) await this.resumeThread(thread);
     return thread;
   }
 
@@ -137,9 +160,14 @@ export class ThreadManager {
     return this.store.markRouted(record.userKey, record.label);
   }
 
+  quarantineThread(record: ThreadRecord, _reason: string): ThreadRecord {
+    return this.store.markThreadStatus(record.userKey, record.label, "quarantined");
+  }
+
   async resumeThread(record: ThreadRecord): Promise<void> {
-    await this.codex.readThread(record.threadId, false);
-    await this.codex.resumeThread(record.threadId, true);
+    const current = this.store.getThread(record.userKey, record.label) ?? record;
+    await assertThreadRoutable(this.store, this.codex, current, this.workspaceRoot());
+    await this.codex.resumeThread(current.threadId, true);
   }
 
   async tryResumeThread(record: ThreadRecord): Promise<boolean> {
@@ -147,9 +175,38 @@ export class ThreadManager {
       await this.resumeThread(record);
       return true;
     } catch {
-      this.store.markThreadStatus(record.userKey, record.label, "missing");
       return false;
     }
+  }
+
+  private async recoverArchivedThread(record: ThreadRecord): Promise<void> {
+    const observed = await readObservedThreadState(this.codex, record.threadId, this.workspaceRoot(), {
+      verifyListMembership: true
+    });
+    if (observed.state === "missing") {
+      this.store.markThreadStatus(record.userKey, record.label, "missing");
+      throw new RoutingError(`Thread '${record.label}' is missing; create /thread new instead.`, "thread_not_routable");
+    }
+    if (observed.state === "active") {
+      this.store.markThreadStatus(record.userKey, record.label, "active");
+      return;
+    }
+    if (observed.reason === "cwd_mismatch") {
+      this.store.markThreadStatus(record.userKey, record.label, "quarantined");
+      throw new RoutingError(`Thread '${record.label}' belongs to another workspace; create /thread new instead.`, "thread_not_routable");
+    }
+    if (observed.state === "unknown") {
+      throw new RoutingError(`Thread '${record.label}' could not be verified; create /thread new instead.`, "thread_not_routable");
+    }
+    if (!this.codex.canUnarchiveThread()) {
+      throw new CapabilityError("thread/unarchive is not enabled because M4b has not verified it for this app-server");
+    }
+    await this.codex.unarchiveThread(record.threadId);
+    this.store.markThreadStatus(record.userKey, record.label, "active");
+  }
+
+  private workspaceRoot(): string {
+    return this.options.workspaceRoot ?? getRuntimePathConfig().workspaceRoot;
   }
 
   private nextAutoLabel(userKey: UserKey): string {

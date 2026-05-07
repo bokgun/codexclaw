@@ -55,6 +55,135 @@ describe("ApprovalBridge", () => {
     store.close();
   });
 
+  test("modify follow-up failure still promotes queued approvals", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    router.failFollowUp = true;
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    const firstApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(firstApprovalId, "modify", "try another way", `prompt:${firstApprovalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(channel.messages.at(-1)?.text).toContain("not routable");
+    expect(channel.requests).toHaveLength(2);
+    store.close();
+  });
+
+  test("modify follow-up completion does not block queued approval promotion", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    router.blockFollowUp = true;
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    const firstApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(firstApprovalId, "modify", "try another way", `prompt:${firstApprovalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(channel.requests).toHaveLength(2);
+    store.close();
+  });
+
+  test("promoted approval prompt failure rejects it and continues approval processing", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    await bridge.handleRuntimeEvent(approvalEvent(3, "thread-1"));
+    channel.failNextApprovalPrompt = true;
+    const firstApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(firstApprovalId, "reject", undefined, `prompt:${firstApprovalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false },
+      { method: "item/commandExecution/requestApproval", requestId: 2, accepted: false }
+    ]);
+    expect(channel.requests).toHaveLength(2);
+    const thirdApprovalId = channel.requests[1]!.approvalId;
+    await bridge.handleChannelResponse(response(thirdApprovalId, "approve", undefined, `prompt:${thirdApprovalId}`));
+    expect(codex.responses.at(-1)).toEqual({
+      method: "item/commandExecution/requestApproval",
+      requestId: 3,
+      accepted: true
+    });
+    store.close();
+  });
+
+  test("initial approval prompt failure drains already queued approvals", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    let releasePrompt!: () => void;
+    channel.blockNextApprovalPrompt = () =>
+      new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    const first = bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await delay(0);
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    channel.failNextApprovalPrompt = true;
+    releasePrompt();
+    await first;
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(channel.requests).toHaveLength(1);
+    const secondApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(secondApprovalId, "approve", undefined, `prompt:${secondApprovalId}`));
+    expect(codex.responses.at(-1)).toEqual({
+      method: "item/commandExecution/requestApproval",
+      requestId: 2,
+      accepted: true
+    });
+    store.close();
+  });
+
+  test("modify follow-up notification failure still promotes queued approvals", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    channel.failSend = true;
+    const router = new MockRouter();
+    router.failFollowUp = true;
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    const firstApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(firstApprovalId, "modify", "try another way", `prompt:${firstApprovalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(channel.requests).toHaveLength(2);
+    store.close();
+  });
+
   test("binds approval prompts to the last channel thread target", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
@@ -163,6 +292,34 @@ describe("ApprovalBridge", () => {
     store.close();
   });
 
+  test("queues same-thread approvals while the first prompt send is in flight", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    let releasePrompt!: () => void;
+    channel.blockNextApprovalPrompt = () =>
+      new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    const first = bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    await delay(0);
+    await bridge.handleRuntimeEvent(approvalEvent(2, "thread-1"));
+    expect(channel.requests).toHaveLength(0);
+
+    releasePrompt();
+    await first;
+    expect(channel.requests).toHaveLength(1);
+    const firstApprovalId = channel.requests[0]!.approvalId;
+    await bridge.handleChannelResponse(response(firstApprovalId, "reject", undefined, `prompt:${firstApprovalId}`));
+
+    expect(channel.requests).toHaveLength(2);
+    store.close();
+  });
+
   test("expires active approval using bridge clock", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
@@ -254,13 +411,24 @@ class MockChannel implements ChannelAdapter {
   readonly approvalResponses = empty<ChannelApprovalResponse>();
   requests: ChannelApprovalRequest[] = [];
   messages: OutboundMessage[] = [];
+  failSend = false;
+  failNextApprovalPrompt = false;
+  blockNextApprovalPrompt?: () => Promise<void>;
 
   async send(_message: OutboundMessage): Promise<{}> {
+    if (this.failSend) throw new Error("send failed");
     this.messages.push(_message);
     return {};
   }
 
   async requestApproval(request: ChannelApprovalRequest): Promise<{ approvalId: string; channelMessageId: string }> {
+    const block = this.blockNextApprovalPrompt;
+    this.blockNextApprovalPrompt = undefined;
+    if (block) await block();
+    if (this.failNextApprovalPrompt) {
+      this.failNextApprovalPrompt = false;
+      throw new Error("request approval failed");
+    }
     this.requests.push(request);
     return { approvalId: request.approvalId, channelMessageId: `prompt:${request.approvalId}` };
   }
@@ -268,8 +436,12 @@ class MockChannel implements ChannelAdapter {
 
 class MockRouter {
   followUps: Array<{ threadId: string; text: string }> = [];
+  failFollowUp = false;
+  blockFollowUp = false;
 
   async enqueueFollowUp(thread: { threadId: string }, text: string): Promise<void> {
+    if (this.failFollowUp) throw new Error("thread not routable");
+    if (this.blockFollowUp) return new Promise(() => undefined);
     this.followUps.push({ threadId: thread.threadId, text });
   }
 }
@@ -300,6 +472,10 @@ function response(
 }
 
 async function* empty<T>(): AsyncIterable<T> {}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function approvalEvent(requestId: number, threadId: string) {
   return {
