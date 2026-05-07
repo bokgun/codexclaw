@@ -31,18 +31,30 @@ inspect, edit, version, and review.
 
 See [VISION.md](VISION.md) for the project vision.
 
-## Local CLI Runtime
+## Fresh Clone Setup
 
-Install dependencies with Bun, start a Codex app-server, then run the M1 CLI
-runtime:
+Install dependencies with Bun, inspect the installer plan, then start a local
+Codex app-server and CLI:
 
 ```sh
 bun install
-cp .env.example .env
-# Edit CODEXCLAW_WORKSPACE_ROOT in .env if Codex should work in another project.
+./codexclaw.sh --dry-run
+./codexclaw.sh
 bun run start:codex
 bun run cli
 ```
+
+Inside the CLI, useful first commands are:
+
+```text
+/thread list
+/skills list
+/quit
+```
+
+If you prefer manual setup, copy `.env.example` to `.env` and edit the same
+settings there. Keep `/project` available for future multi-workspace routing;
+use `CODEXCLAW_WORKSPACE_ROOT` for the project Codex should inspect and edit.
 
 Verify the pinned app-server schema before runtime work:
 
@@ -62,14 +74,23 @@ Required environment:
 
 `CODEXCLAW_WORKSPACE_ROOT` and `CODEXCLAW_STATE_DIR` are intentionally
 separate. The workspace is the project Codex can inspect and edit; the state
-directory stores codexclaw metadata such as thread pointers and pending approval
-mappings. A future installer can ask for these paths interactively and write the
-same settings to `.env`.
+directory stores codexclaw metadata such as thread pointers, labels, pending
+approval mappings, schedules, and prefs.
 
 The M1 CLI path uses the shared runtime router, SQLite pointer store, thread
 manager, approval bridge, and one-active-turn queue that future Telegram and
 Discord adapters build on. The older spike scripts remain available under
 `bun run spike:*` for protocol diagnostics.
+
+## Operations Docs
+
+- [Local deployment](docs/deploy/local.md)
+- [WSS reverse proxy](docs/deploy/wss-reverse-proxy.md)
+- [Container reference](docs/deploy/container.md)
+- [Raspberry Pi smoke path](docs/deploy/raspberry-pi-smoke.md)
+- [Logging](docs/logging.md)
+- [Skills inspection](docs/skills.md)
+- [M4 manual checklist](docs/M4-manual-checklist.md)
 
 ## Knowledge Wiki
 

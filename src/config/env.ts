@@ -390,8 +390,8 @@ function validateWsUrl(wsUrl: string, deploymentMode: DeploymentMode): void {
     if (url.protocol !== "wss:") throw new Error("CODEXCLAW_CODEX_WS must use wss:// in reverse_proxy_wss mode");
     return;
   }
-  if (deploymentMode === "local_loopback" && !isLoopbackHost(url.hostname)) {
-    throw new Error("CODEXCLAW_CODEX_WS must point at a loopback host in local_loopback mode");
+  if ((deploymentMode === "local_loopback" || deploymentMode === "local_dev") && !isLoopbackHost(url.hostname)) {
+    throw new Error(`CODEXCLAW_CODEX_WS must point at a loopback host in ${deploymentMode} mode`);
   }
   if (url.protocol === "wss:") return;
   if (isLoopbackHost(url.hostname)) return;

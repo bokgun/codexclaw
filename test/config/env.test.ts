@@ -316,6 +316,10 @@ describe("Runtime path config", () => {
     process.env.CODEXCLAW_CODEX_WS = "ws://127.0.0.1:4500";
     expect(getCodexConnectionConfig().wsUrl).toBe("ws://127.0.0.1:4500");
 
+    process.env.CODEXCLAW_DEPLOYMENT_MODE = "local_dev";
+    process.env.CODEXCLAW_CODEX_WS = "wss://codex.example/ws";
+    expect(() => getCodexConnectionConfig()).toThrow("loopback host in local_dev");
+
     process.env.CODEXCLAW_DEPLOYMENT_MODE = "reverse_proxy_wss";
     process.env.CODEXCLAW_CODEX_WS = "ws://127.0.0.1:4500";
     expect(() => getCodexConnectionConfig()).toThrow("wss:// in reverse_proxy_wss");
@@ -344,7 +348,14 @@ describe("Telegram config", () => {
     process.env.CODEXCLAW_TELEGRAM_ALLOW_ALL_USERS_FOR_LOCAL_DEV = "true";
     expect(() => getTelegramConfig()).toThrow("CODEXCLAW_DEPLOYMENT_MODE=local_dev");
 
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
     process.env.CODEXCLAW_DEPLOYMENT_MODE = "local_dev";
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_CODEX_WS = "wss://codex.example/ws";
+    expect(() => getCodexConnectionConfig()).toThrow("loopback host in local_dev");
+    process.env.CODEXCLAW_CODEX_WS = "ws://127.0.0.1:4500";
     expect(getTelegramConfig().allowAllUsersForLocalDev).toBe(true);
   });
 
@@ -387,7 +398,14 @@ describe("Discord config", () => {
     process.env.CODEXCLAW_DISCORD_ALLOW_ALL_USERS_FOR_LOCAL_DEV = "true";
     expect(() => getDiscordConfig()).toThrow("CODEXCLAW_DEPLOYMENT_MODE=local_dev");
 
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
     process.env.CODEXCLAW_DEPLOYMENT_MODE = "local_dev";
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_CODEX_WS = "wss://codex.example/ws";
+    expect(() => getCodexConnectionConfig()).toThrow("loopback host in local_dev");
+    process.env.CODEXCLAW_CODEX_WS = "ws://127.0.0.1:4500";
     expect(getDiscordConfig().allowAllUsersForLocalDev).toBe(true);
   });
 
