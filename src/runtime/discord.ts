@@ -1,7 +1,8 @@
 import { createDiscordChannelAdapter } from "../channel/discord.js";
-import { getDiscordConfig, getSchedulerConfig } from "../config/env.js";
+import { getCodexConnectionConfig, getDiscordConfig, getSchedulerConfig } from "../config/env.js";
 import { HostRuntime } from "./host.js";
 
+getCodexConnectionConfig();
 const config = getDiscordConfig();
 const scheduler = getSchedulerConfig();
 const runtime = new HostRuntime({

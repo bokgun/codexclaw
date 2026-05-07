@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
@@ -7,12 +7,16 @@ export interface RuntimePathConfig {
   workspaceRoot: string;
   stateDir: string;
   dbPath: string;
+  deploymentMode: DeploymentMode;
+  allowWorkspaceInternalState: boolean;
 }
 
 export interface CodexConnectionConfig {
   wsUrl: string;
   tokenFile: string;
 }
+
+export type DeploymentMode = "local_dev" | "local_loopback" | "reverse_proxy_wss";
 
 export interface TelegramConfig {
   mode: "polling";
@@ -81,12 +85,15 @@ export function getCodexConnectionConfig(): CodexConnectionConfig {
   loadDotenv();
 
   const paths = getRuntimePathConfig();
-  const wsUrl = process.env.CODEXCLAW_CODEX_WS ?? "ws://127.0.0.1:4500";
+  const wsUrl = process.env.CODEXCLAW_CODEX_WS?.trim() || "ws://127.0.0.1:4500";
   const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE?.trim();
   const resolvedTokenFile = tokenFile ? resolveStatePath(paths.stateDir, tokenFile, "codex.token") : resolve(paths.stateDir, "codex.token");
 
-  validateWsUrl(wsUrl);
-  ensureTokenFile(resolvedTokenFile);
+  refuseSymlinkPath(resolvedTokenFile, "token file");
+  validateWorkspaceBoundary(resolvedTokenFile, "CODEXCLAW_CODEX_TOKEN_FILE", paths);
+  validateStateOwnedPath(resolvedTokenFile, "CODEXCLAW_CODEX_TOKEN_FILE", paths);
+  validateWsUrl(wsUrl, paths.deploymentMode);
+  ensureTokenFile(resolvedTokenFile, paths.deploymentMode);
 
   return {
     wsUrl,
@@ -97,19 +104,34 @@ export function getCodexConnectionConfig(): CodexConnectionConfig {
 export function getRuntimePathConfig(): RuntimePathConfig {
   loadDotenv();
 
+  const deploymentMode = parseDeploymentMode(process.env.CODEXCLAW_DEPLOYMENT_MODE);
+  const allowWorkspaceInternalState = parseBoolean(process.env.CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE);
   const workspaceRoot = resolveWorkspaceRoot(process.env.CODEXCLAW_WORKSPACE_ROOT?.trim() || process.cwd());
   const stateDirInput = process.env.CODEXCLAW_STATE_DIR?.trim();
-  const stateDir = stateDirInput ? resolveAgainst(workspaceRoot, stateDirInput) : resolve(workspaceRoot, ".codexclaw");
-  ensurePrivateDirectory(stateDir, "CODEXCLAW_STATE_DIR");
+  const stateDirPath = stateDirInput ? resolveAgainst(workspaceRoot, stateDirInput) : resolveHomePath("~/.codexclaw");
+  const policy = {
+    workspaceRoot,
+    stateDir: stateDirPath,
+    deploymentMode,
+    allowWorkspaceInternalState
+  };
+  validateWorkspaceBoundary(stateDirPath, "CODEXCLAW_STATE_DIR", policy);
+  const stateDir = ensurePrivateDirectory(stateDirPath, "CODEXCLAW_STATE_DIR");
+  validateWorkspaceBoundary(stateDir, "CODEXCLAW_STATE_DIR", policy);
   const dbPathInput = process.env.CODEXCLAW_DB?.trim();
   const dbPath = dbPathInput
     ? resolveStatePath(stateDir, dbPathInput, "codexclaw.sqlite", ["codexclaw.db"])
     : resolve(stateDir, "codexclaw.sqlite");
+  validateDatabasePath(dbPath);
+  validateWorkspaceBoundary(dbPath, "CODEXCLAW_DB", policy);
+  validateStateOwnedPath(dbPath, "CODEXCLAW_DB", { ...policy, stateDir });
 
   return {
     workspaceRoot,
     stateDir,
-    dbPath
+    dbPath,
+    deploymentMode,
+    allowWorkspaceInternalState
   };
 }
 
@@ -124,6 +146,7 @@ export function getTelegramConfig(): TelegramConfig {
     if (!/^\d+$/.test(userId)) throw new Error("CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS must contain numeric Telegram user ids");
   }
   const allowAllUsersForLocalDev = parseBoolean(process.env.CODEXCLAW_TELEGRAM_ALLOW_ALL_USERS_FOR_LOCAL_DEV);
+  validateAllowAllUsersForLocalDev("CODEXCLAW_TELEGRAM_ALLOW_ALL_USERS_FOR_LOCAL_DEV", allowAllUsersForLocalDev);
   if (allowedUserIds.length === 0 && !allowAllUsersForLocalDev) {
     throw new Error(
       "CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS must contain at least one Telegram user id unless CODEXCLAW_TELEGRAM_ALLOW_ALL_USERS_FOR_LOCAL_DEV=true"
@@ -166,6 +189,7 @@ export function getDiscordConfig(): DiscordConfig {
     if (!/^\d+$/.test(userId)) throw new Error("CODEXCLAW_DISCORD_ALLOWED_USER_IDS must contain Discord snowflakes");
   }
   const allowAllUsersForLocalDev = parseBoolean(process.env.CODEXCLAW_DISCORD_ALLOW_ALL_USERS_FOR_LOCAL_DEV);
+  validateAllowAllUsersForLocalDev("CODEXCLAW_DISCORD_ALLOW_ALL_USERS_FOR_LOCAL_DEV", allowAllUsersForLocalDev);
   if (allowedUserIds.length === 0 && !allowAllUsersForLocalDev) {
     throw new Error(
       "CODEXCLAW_DISCORD_ALLOWED_USER_IDS must contain at least one Discord user id unless CODEXCLAW_DISCORD_ALLOW_ALL_USERS_FOR_LOCAL_DEV=true"
@@ -240,10 +264,15 @@ export function redactDiscordSecrets(value: string, botToken = process.env.CODEX
   return redacted.replace(/Bot\s+[A-Za-z0-9._-]+/g, "Bot [discord-bot-token]");
 }
 
-function ensureTokenFile(tokenFile: string): void {
+function ensureTokenFile(tokenFile: string, deploymentMode: DeploymentMode): void {
+  refuseSymlinkPath(tokenFile, "token file");
   if (existsSync(tokenFile)) {
     validateTokenFile(tokenFile);
     return;
+  }
+
+  if (deploymentMode === "reverse_proxy_wss") {
+    throw new Error(`CODEXCLAW_CODEX_TOKEN_FILE must exist in reverse_proxy_wss mode: ${tokenFile}`);
   }
 
   mkdirSync(dirname(tokenFile), { recursive: true, mode: 0o700 });
@@ -264,6 +293,30 @@ function validateTokenFile(tokenFile: string): void {
   const updated = statSync(tokenFile);
   if ((updated.mode & 0o077) !== 0) {
     throw new Error(`Token file must not be group/world accessible: ${tokenFile}`);
+  }
+}
+
+function validateDatabasePath(dbPath: string): void {
+  refuseSymlinkPath(dbPath, "CODEXCLAW_DB");
+  if (!existsSync(dbPath)) return;
+
+  const stat = statSync(dbPath);
+  if (!stat.isFile()) throw new Error(`CODEXCLAW_DB must be a file when it already exists: ${dbPath}`);
+  if (stat.uid === process.getuid?.() && (stat.mode & 0o077) !== 0) {
+    chmodSync(dbPath, stat.mode & 0o700);
+  }
+  const updated = statSync(dbPath);
+  if ((updated.mode & 0o077) !== 0) {
+    throw new Error(`CODEXCLAW_DB must not be group/world accessible: ${dbPath}`);
+  }
+}
+
+function refuseSymlinkPath(path: string, label: string): void {
+  try {
+    if (lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to use symlink ${label}: ${path}`);
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
   }
 }
 
@@ -295,7 +348,7 @@ function resolveHomePath(input: string, base = process.cwd()): string {
   return resolve(base, input);
 }
 
-function ensurePrivateDirectory(path: string, name: string): void {
+function ensurePrivateDirectory(path: string, name: string): string {
   if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: 0o700 });
   const link = lstatSync(path);
   if (link.isSymbolicLink()) throw new Error(`Refusing symlink ${name}: ${path}`);
@@ -304,25 +357,102 @@ function ensurePrivateDirectory(path: string, name: string): void {
   if (stat.uid === process.getuid?.() && (stat.mode & 0o077) !== 0) {
     chmodSync(path, stat.mode & 0o700);
   }
+  const updated = statSync(path);
+  if ((updated.mode & 0o077) !== 0) {
+    throw new Error(`${name} must not be group/world accessible: ${path}`);
+  }
+  return realpathSync(path);
 }
 
-function validateWsUrl(wsUrl: string): void {
+function validateWsUrl(wsUrl: string, deploymentMode: DeploymentMode): void {
   const url = new URL(wsUrl);
-  if (url.username || url.password || url.search) {
-    throw new Error("CODEXCLAW_CODEX_WS must not include credentials or query parameters");
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("CODEXCLAW_CODEX_WS must not include credentials, query parameters, or fragments");
   }
   if (url.protocol !== "ws:" && url.protocol !== "wss:") {
     throw new Error(`CODEXCLAW_CODEX_WS must use ws:// or wss://, got ${url.protocol}`);
+  }
+  if (deploymentMode === "reverse_proxy_wss") {
+    if (url.protocol !== "wss:") throw new Error("CODEXCLAW_CODEX_WS must use wss:// in reverse_proxy_wss mode");
+    return;
+  }
+  if (deploymentMode === "local_loopback" && !isLoopbackHost(url.hostname)) {
+    throw new Error("CODEXCLAW_CODEX_WS must point at a loopback host in local_loopback mode");
   }
   if (url.protocol === "wss:") return;
   if (isLoopbackHost(url.hostname)) return;
   throw new Error("Refusing plaintext ws:// Codex app-server URL for a non-loopback host; use wss://");
 }
 
+function parseDeploymentMode(value: string | undefined): DeploymentMode {
+  const raw = value?.trim() || "local_loopback";
+  if (raw === "local_dev" || raw === "local_loopback" || raw === "reverse_proxy_wss") return raw;
+  throw new Error("CODEXCLAW_DEPLOYMENT_MODE must be one of local_dev, local_loopback, reverse_proxy_wss");
+}
+
+function validateWorkspaceBoundary(
+  path: string,
+  name: "CODEXCLAW_STATE_DIR" | "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB",
+  config: Pick<RuntimePathConfig, "workspaceRoot" | "deploymentMode" | "allowWorkspaceInternalState">
+): void {
+  const insideWorkspace = isInsideWorkspace(path, config.workspaceRoot);
+  if (!insideWorkspace) return;
+
+  if (config.deploymentMode === "local_dev" && config.allowWorkspaceInternalState) return;
+  throw new Error(
+    `${name} must stay outside CODEXCLAW_WORKSPACE_ROOT unless CODEXCLAW_DEPLOYMENT_MODE=local_dev and CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE=true`
+  );
+}
+
+function validateStateOwnedPath(
+  path: string,
+  name: "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB",
+  config: Pick<RuntimePathConfig, "stateDir" | "deploymentMode" | "allowWorkspaceInternalState">
+): void {
+  if (isInsideDirectory(path, config.stateDir)) return;
+  if (config.deploymentMode === "local_dev" && config.allowWorkspaceInternalState) return;
+  throw new Error(
+    `${name} must stay inside CODEXCLAW_STATE_DIR unless CODEXCLAW_DEPLOYMENT_MODE=local_dev and CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE=true`
+  );
+}
+
+function isInsideWorkspace(path: string, workspaceRoot: string): boolean {
+  return isInsideDirectory(path, workspaceRoot);
+}
+
+function isInsideDirectory(path: string, directory: string): boolean {
+  const root = normalizePath(directory);
+  const candidate = normalizePath(resolveExistingPathTarget(path));
+  return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+function resolveExistingPathTarget(path: string): string {
+  if (existsSync(path)) return realpathSync(path);
+
+  let current = path;
+  const missingSegments: string[] = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return path;
+    missingSegments.unshift(basename(current));
+    current = parent;
+  }
+
+  return join(realpathSync(current), ...missingSegments);
+}
+
+function normalizePath(path: string): string {
+  return resolve(path).replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT");
+}
+
 function validateTelegramApiBaseUrl(apiBaseUrl: string): void {
   const url = new URL(apiBaseUrl);
-  if (url.username || url.password || url.search) {
-    throw new Error("CODEXCLAW_TELEGRAM_API_BASE_URL must not include credentials or query parameters");
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("CODEXCLAW_TELEGRAM_API_BASE_URL must not include credentials, query parameters, or fragments");
   }
   if (url.protocol === "https:") return;
   if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
@@ -331,8 +461,8 @@ function validateTelegramApiBaseUrl(apiBaseUrl: string): void {
 
 function validateDiscordApiBaseUrl(apiBaseUrl: string): void {
   const url = new URL(apiBaseUrl);
-  if (url.username || url.password || url.search) {
-    throw new Error("CODEXCLAW_DISCORD_API_BASE_URL must not include credentials or query parameters");
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("CODEXCLAW_DISCORD_API_BASE_URL must not include credentials, query parameters, or fragments");
   }
   if (url.protocol === "https:") return;
   if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
@@ -341,12 +471,20 @@ function validateDiscordApiBaseUrl(apiBaseUrl: string): void {
 
 function validateDiscordGatewayUrl(gatewayUrl: string): void {
   const url = new URL(gatewayUrl);
-  if (url.username || url.password || url.search) {
-    throw new Error("CODEXCLAW_DISCORD_GATEWAY_URL must not include credentials or query parameters");
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("CODEXCLAW_DISCORD_GATEWAY_URL must not include credentials, query parameters, or fragments");
   }
   if (url.protocol === "wss:") return;
   if (url.protocol === "ws:" && isLoopbackHost(url.hostname)) return;
   throw new Error("CODEXCLAW_DISCORD_GATEWAY_URL must use wss:// unless it points at a loopback test server");
+}
+
+function validateAllowAllUsersForLocalDev(name: string, enabled: boolean): void {
+  if (!enabled) return;
+  const deploymentMode = parseDeploymentMode(process.env.CODEXCLAW_DEPLOYMENT_MODE);
+  if (deploymentMode !== "local_dev") {
+    throw new Error(`${name}=true requires CODEXCLAW_DEPLOYMENT_MODE=local_dev`);
+  }
 }
 
 function normalizeHttpPath(path: string): string {

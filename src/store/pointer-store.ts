@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { chmodSync } from "node:fs";
 import type {
   ChannelName,
   PendingApprovalRecord,
@@ -112,6 +113,7 @@ export class PointerStore {
 
   constructor(path = ":memory:") {
     this.db = new Database(path, { create: true, strict: true });
+    if (path !== ":memory:") chmodSync(path, 0o600);
     this.migrate();
   }
 

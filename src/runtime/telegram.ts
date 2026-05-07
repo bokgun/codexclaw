@@ -1,7 +1,8 @@
 import { createTelegramChannelAdapter } from "../channel/telegram.js";
-import { getTelegramConfig } from "../config/env.js";
+import { getCodexConnectionConfig, getTelegramConfig } from "../config/env.js";
 import { HostRuntime } from "./host.js";
 
+getCodexConnectionConfig();
 const config = getTelegramConfig();
 const runtime = new HostRuntime({
   channel: createTelegramChannelAdapter({ config }),

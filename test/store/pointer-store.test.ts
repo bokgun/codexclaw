@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PointerStore, countActiveThreads } from "../../src/store/pointer-store.js";
@@ -14,6 +14,14 @@ afterEach(() => {
 });
 
 describe("PointerStore", () => {
+  test("creates sqlite files with private permissions", () => {
+    const dbPath = tempDbPath();
+    const store = new PointerStore(dbPath);
+    store.close();
+
+    expect(statSync(dbPath).mode & 0o077).toBe(0);
+  });
+
   test("migrates pointer tables and CRUDs thread pointers", () => {
     const store = newStore();
     const routedAt = "2026-05-01T00:00:00.000Z";
