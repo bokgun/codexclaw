@@ -2,6 +2,7 @@ import type { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { attachPrefsToText } from "../codex/input.js";
 import { attachWikiContextToText } from "../wiki/context.js";
 import { parseSchedule } from "./schedule.js";
+import type { SkillInspectionService } from "../skills/index.js";
 import type { ThreadManager } from "../thread/thread-manager.js";
 import type { PointerStore } from "../store/pointer-store.js";
 import { RoutingError } from "./errors.js";
@@ -16,6 +17,7 @@ export interface RouterOptions {
   minScheduleIntervalMs?: number;
   defaultTaskRetry?: number;
   defaultTaskTimeoutSec?: number;
+  skills?: SkillInspectionService;
 }
 
 export interface WikiCommandService {
@@ -288,6 +290,10 @@ export class Router {
   }
 
   handleRuntimeEvent(event: RuntimeEvent): void {
+    if (event.kind === "skills_changed") {
+      this.options.skills?.invalidateCodexSkills();
+      return;
+    }
     if (event.kind === "turn_completed" || event.kind === "turn_failed") {
       if (event.threadId) this.scheduledWaiters.get(event.threadId)?.resolve(event);
       if (event.threadId) this.queue.resolveTerminal(event.threadId, event.turnId);
@@ -348,6 +354,11 @@ export class Router {
       case "/wiki":
         await this.handleWikiCommand(message, args);
         return;
+      case "/skills":
+        await this.handleSkillsCommand(message, args);
+        return;
+      case "/skill":
+        throw new RoutingError("Usage: /skills list", "invalid_command");
       default:
         throw new RoutingError(`Unknown command '${command}'.`, "invalid_command");
     }
@@ -541,6 +552,13 @@ export class Router {
       return;
     }
     throw new RoutingError("Usage: /wiki ingest|note|capture-selected|query|with|lint", "invalid_command");
+  }
+
+  private async handleSkillsCommand(message: InboundMessage, args: string[]): Promise<void> {
+    if (args.length !== 1 || args[0] !== "list") throw new RoutingError("Usage: /skills list", "invalid_command");
+    const skills = this.options.skills;
+    if (!skills) throw new RoutingError("Skills inspection is not enabled in this runtime.", "capability_unavailable");
+    await this.sendText(message, await skills.renderSkillList());
   }
 
   private attachPrefs(userKey: string, text: string): string {

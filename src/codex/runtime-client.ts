@@ -29,6 +29,32 @@ export interface CodexThreadReadResponse {
   thread: CodexThreadMetadata;
 }
 
+export interface SkillsListParams {
+  cwds?: string[];
+  forceReload?: boolean;
+}
+
+export interface SkillsListResponse {
+  data: Array<{
+    cwd: string;
+    skills: Array<{
+      name: string;
+      description: string;
+      shortDescription?: string;
+      interface?: {
+        displayName?: string;
+        shortDescription?: string;
+        defaultPrompt?: string;
+      };
+      dependencies?: unknown;
+      path: string;
+      scope: "user" | "repo" | "system" | "admin";
+      enabled: boolean;
+    }>;
+    errors: Array<{ path: string; message: string }>;
+  }>;
+}
+
 export interface ThreadCapabilityProbeResult {
   list: boolean;
   archiveExternallyVerified: boolean;
@@ -47,7 +73,8 @@ export const CODEX_METHODS = {
   turnStart: "turn/start",
   turnInterrupt: "turn/interrupt",
   commandApproval: "item/commandExecution/requestApproval",
-  fileApproval: "item/fileChange/requestApproval"
+  fileApproval: "item/fileChange/requestApproval",
+  skillsList: "skills/list"
 } as const;
 
 export class CodexRuntimeClient {
@@ -175,6 +202,10 @@ export class CodexRuntimeClient {
     await this.transport.request(CODEX_METHODS.turnInterrupt, { threadId, turnId });
   }
 
+  async listSkills(params: SkillsListParams): Promise<SkillsListResponse> {
+    return (await this.transport.request(CODEX_METHODS.skillsList, params as JsonObject)) as unknown as SkillsListResponse;
+  }
+
   sendApprovalResponse(method: string, requestId: number | string, accepted: boolean): void {
     if (!isObservedApprovalMethod(method)) {
       throw new CapabilityError(`Unsupported approval method '${method}'`);
@@ -236,6 +267,9 @@ export class CodexRuntimeClient {
       }
       case "error":
         this.emit({ kind: "turn_failed", threadId, turnId, error: JSON.stringify(notification.params ?? null) });
+        return;
+      case "skills/changed":
+        this.emit({ kind: "skills_changed" });
         return;
       default:
         this.emit({ kind: "unknown", method: notification.method, params: notification.params });

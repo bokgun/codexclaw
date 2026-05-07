@@ -33,6 +33,7 @@ export type ChannelCommand =
   | { kind: "wiki"; action: "query"; query: string; limit?: number }
   | { kind: "wiki"; action: "with"; query: string; message: string; limit?: number }
   | { kind: "wiki"; action: "lint"; writeReport: boolean }
+  | { kind: "skills"; action: "list" }
   | { kind: "quit" };
 
 export type ParsedChannelInput =

@@ -57,6 +57,11 @@ export class EventDispatcher {
       return;
     }
 
+    if (event.kind === "skills_changed") {
+      this.logger.debug("codex_event", { kind: event.kind });
+      return;
+    }
+
     this.logger.debug("codex_event", {
       kind: event.kind,
       threadId: "threadId" in event ? event.threadId : undefined,

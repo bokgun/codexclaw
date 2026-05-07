@@ -12,6 +12,7 @@ import {
   getWikiConfig
 } from "../config/env.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
+import { createSkillInspectionService } from "../skills/index.js";
 import { ThreadManager } from "../thread/thread-manager.js";
 import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
 import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
@@ -90,14 +91,22 @@ export class HostRuntime {
     const sink = new ChannelAdapterSink(this.channel);
     this.sink = sink;
     const dispatcher = new EventDispatcher(sink, this.logger);
-    const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: getRuntimePathConfig().workspaceRoot });
+    const runtimePaths = getRuntimePathConfig();
+    const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: runtimePaths.workspaceRoot });
+    const wikiService = this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService();
     this.router = new Router(threads, this.codex, sink, {
       store: this.store,
-      wiki: this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService(),
+      wiki: wikiService,
       channel: this.channel.name,
       minScheduleIntervalMs: this.schedulerOptions === false ? undefined : this.schedulerOptions.minScheduleIntervalMs,
       defaultTaskRetry: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultRetry,
       defaultTaskTimeoutSec: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultTimeoutSec,
+      skills: createSkillInspectionService(this.codex, {
+        workspaceRoot: runtimePaths.workspaceRoot,
+        activeChannel: this.channel.name,
+        schedulerEnabled: this.schedulerOptions !== false && this.schedulerOptions.enabled !== false,
+        wikiEnabled: Boolean(wikiService)
+      }),
       bindThread: (thread, message) => {
         const target = {
           userKey: message.userKey,

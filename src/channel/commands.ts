@@ -122,6 +122,15 @@ export function parseSlashCommand(text: string): ParseCommandResult {
     return { error: "usage: /wiki ingest|note|capture-selected|query|with|lint" };
   }
 
+  if (command === "skills") {
+    if (args.length === 1 && args[0] === "list") return { command: { kind: "skills", action: "list" } };
+    return { error: "usage: /skills list" };
+  }
+
+  if (command === "skill") {
+    return { error: "usage: /skills list" };
+  }
+
   if (command === "quit" || command === "exit") {
     if (args.length > 0) return { error: `usage: ${rawCommand}` };
     return { command: { kind: "quit" } };

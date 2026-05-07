@@ -126,6 +126,7 @@ export type RuntimeEvent =
   | { kind: "diff_updated"; threadId?: ThreadId; turnId?: TurnId; size?: number }
   | { kind: "tool_event"; threadId?: ThreadId; turnId?: TurnId; itemId?: string; status?: string }
   | { kind: "approval_requested"; requestId: number | string; method: string; params: JsonValue }
+  | { kind: "skills_changed" }
   | { kind: "unknown"; method: string; params?: JsonValue };
 
 export type TaskDedupePolicy = "concurrency_1";

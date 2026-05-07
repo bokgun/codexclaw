@@ -113,4 +113,10 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/wiki query --limit 100 x").error).toBe("usage: /wiki query [--limit <n>] <query>");
     expect(parseSlashCommand("/wiki nope").error).toBe("usage: /wiki ingest|note|capture-selected|query|with|lint");
   });
+
+  test("parses read-only skills inspection command and rejects skill execution shapes", () => {
+    expect(parseSlashCommand("/skills list").command).toEqual({ kind: "skills", action: "list" });
+    expect(parseSlashCommand("/skills use review").error).toBe("usage: /skills list");
+    expect(parseSlashCommand("/skill review").error).toBe("usage: /skills list");
+  });
 });

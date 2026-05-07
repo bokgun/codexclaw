@@ -10,7 +10,7 @@ namespaces:
 
 - `/project ...` is reserved for selecting and managing workspaces/projects.
 - `/thread ...` manages Codex threads inside the active project.
-- `/tasks`, `/prefs`, and `/wiki` are feature namespaces.
+- `/tasks`, `/prefs`, `/wiki`, and `/skills` are feature namespaces.
 
 Older top-level thread commands such as `/new`, `/switch`, `/threads`,
 `/branch`, and `/archive` remain accepted as compatibility aliases, but new
@@ -35,6 +35,7 @@ docs and channel shortcuts should prefer the explicit `/thread ...` form.
 | `/prefs show` | none | Shows whitelisted user preferences. |
 | `/prefs set <key> <value>` | key, value | Sets `lang`, `tone`, or `verbosity`. |
 | `/prefs unset <key>` | key | Removes `lang`, `tone`, or `verbosity`. |
+| `/skills list` | none | Shows a bounded read-only list of Codex skills and codexclaw host capability metadata. |
 
 Compatibility aliases:
 
@@ -71,6 +72,15 @@ letter or number.
 - Preferences are attached to turns as bounded user preference context. They do
   not change sandbox behavior, approval policy, model routing, channel
   authorization, or AGENTS.md trust boundaries.
+
+## Skills Notes
+
+- `/skills list` is read-only. codexclaw calls Codex `skills/list`, caches
+  normalized metadata in memory, and invalidates that cache on `skills/changed`.
+- codexclaw does not scan `SKILL.md`, execute skills, write skill config,
+  install plugins, or persist skill metadata.
+- Output omits dependency command bodies, dependency URLs, default prompts, and
+  raw private absolute paths. Host entries are metadata-only capability labels.
 
 ## Telegram Notes
 

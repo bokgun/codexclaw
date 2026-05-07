@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Router } from "../../src/runtime/router.js";
 import type { ChannelSink, InboundMessage } from "../../src/runtime/types.js";
+import { createSkillInspectionService } from "../../src/skills/index.js";
 import { createPointerStore } from "../../src/store/pointer-store.js";
 import { ThreadManager } from "../../src/thread/thread-manager.js";
 
@@ -566,6 +567,37 @@ describe("Router", () => {
     expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: expect.stringContaining("quarantined") });
     store.close();
   });
+
+  test("/skills list renders read-only bounded skills and unknown skill commands fail closed", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const skills = createSkillInspectionService(codex as never, {
+      workspaceRoot: process.cwd(),
+      activeChannel: "cli",
+      outputPolicy: { maxItems: 10, maxOutputChars: 1_200 }
+    });
+    const router = new Router(manager(store, codex), codex as never, sink, { skills });
+
+    await router.receive(message("/skills list"));
+    router.handleRuntimeEvent({ kind: "skills_changed" });
+    await router.receive(message("/skills list"));
+    await router.receive(message("/skills use review"));
+    await router.receive(message("/skill review"));
+
+    expect(codex.skillListCalls).toEqual([
+      { cwds: [process.cwd()], forceReload: true },
+      { cwds: [process.cwd()], forceReload: true }
+    ]);
+    const firstSkillsOutput = sink.events.at(-4);
+    expect(firstSkillsOutput?.kind).toBe("text");
+    expect("text" in firstSkillsOutput! ? firstSkillsOutput.text : "").toContain("Skills (read-only)");
+    expect("text" in firstSkillsOutput! ? firstSkillsOutput.text : "").toContain("[codex/repo/enabled] Router Skill");
+    expect("text" in firstSkillsOutput! ? firstSkillsOutput.text : "").not.toContain("secret command");
+    expect(sink.events.at(-2)).toMatchObject({ kind: "text", text: "Usage: /skills list" });
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: "Usage: /skills list" });
+    store.close();
+  });
 });
 
 class MockCodex {
@@ -574,6 +606,7 @@ class MockCodex {
   forkedThreads: string[] = [];
   resumedThreads: string[] = [];
   turns: Array<{ threadId: string; text: string }> = [];
+  skillListCalls: Array<{ cwds: string[]; forceReload?: boolean }> = [];
   blockNextTurn?: () => Promise<void>;
   failNextTurn = false;
   metadataStatus = "active";
@@ -653,6 +686,49 @@ class MockCodex {
     const turnId = `turn-${this.turns.length}`;
     queueMicrotask(() => this.onStarted?.(threadId, turnId));
     return turnId;
+  }
+
+  async listSkills(params: { cwds: string[]; forceReload?: boolean }): Promise<{
+    data: Array<{
+      cwd: string;
+      skills: Array<{
+        name: string;
+        description: string;
+        interface: { displayName: string; shortDescription: string; defaultPrompt: string };
+        dependencies: { tools: Array<{ type: string; value: string; command: string; url: string }> };
+        path: string;
+        scope: "repo";
+        enabled: boolean;
+      }>;
+      errors: Array<{ path: string; message: string }>;
+    }>;
+  }> {
+    this.skillListCalls.push(params);
+    return {
+      data: [
+        {
+          cwd: process.cwd(),
+          skills: [
+            {
+              name: "router",
+              description: "Router skill",
+              interface: {
+                displayName: "Router Skill",
+                shortDescription: "Inspect router skills",
+                defaultPrompt: "secret prompt"
+              },
+              dependencies: {
+                tools: [{ type: "command", value: "node", command: "secret command", url: "https://secret.example" }]
+              },
+              path: `${process.cwd()}/skills/router/SKILL.md`,
+              scope: "repo",
+              enabled: true
+            }
+          ],
+          errors: []
+        }
+      ]
+    };
   }
 }
 
