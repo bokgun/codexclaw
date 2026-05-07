@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
 export interface RuntimePathConfig {
@@ -82,7 +83,7 @@ export function getCodexConnectionConfig(): CodexConnectionConfig {
   const paths = getRuntimePathConfig();
   const wsUrl = process.env.CODEXCLAW_CODEX_WS ?? "ws://127.0.0.1:4500";
   const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE?.trim();
-  const resolvedTokenFile = tokenFile ? resolveAgainst(paths.workspaceRoot, tokenFile) : resolve(paths.stateDir, "codex.token");
+  const resolvedTokenFile = tokenFile ? resolveStatePath(paths.stateDir, tokenFile, "codex.token") : resolve(paths.stateDir, "codex.token");
 
   validateWsUrl(wsUrl);
   ensureTokenFile(resolvedTokenFile);
@@ -99,8 +100,11 @@ export function getRuntimePathConfig(): RuntimePathConfig {
   const workspaceRoot = resolveWorkspaceRoot(process.env.CODEXCLAW_WORKSPACE_ROOT?.trim() || process.cwd());
   const stateDirInput = process.env.CODEXCLAW_STATE_DIR?.trim();
   const stateDir = stateDirInput ? resolveAgainst(workspaceRoot, stateDirInput) : resolve(workspaceRoot, ".codexclaw");
+  ensurePrivateDirectory(stateDir, "CODEXCLAW_STATE_DIR");
   const dbPathInput = process.env.CODEXCLAW_DB?.trim();
-  const dbPath = dbPathInput ? resolveAgainst(workspaceRoot, dbPathInput) : resolve(stateDir, "codexclaw.sqlite");
+  const dbPath = dbPathInput
+    ? resolveStatePath(stateDir, dbPathInput, "codexclaw.sqlite", ["codexclaw.db"])
+    : resolve(stateDir, "codexclaw.sqlite");
 
   return {
     workspaceRoot,
@@ -264,15 +268,42 @@ function validateTokenFile(tokenFile: string): void {
 }
 
 function resolveWorkspaceRoot(input: string): string {
-  const resolved = resolve(input);
-  if (!existsSync(resolved)) throw new Error(`CODEXCLAW_WORKSPACE_ROOT must be a directory: ${resolved}`);
+  const resolved = resolveHomePath(input);
+  if (!existsSync(resolved)) mkdirSync(resolved, { recursive: true });
   const stat = statSync(resolved);
   if (!stat.isDirectory()) throw new Error(`CODEXCLAW_WORKSPACE_ROOT must be a directory: ${resolved}`);
   return realpathSync(resolved);
 }
 
 function resolveAgainst(base: string, input: string): string {
+  return resolveHomePath(input, base);
+}
+
+function resolveStatePath(stateDir: string, input: string, basename: string, legacyBasenames: readonly string[] = []): string {
+  for (const legacyBasename of [basename, ...legacyBasenames]) {
+    if (input !== `.codexclaw/${legacyBasename}` && input !== `.codexclaw\\${legacyBasename}`) continue;
+    if (legacyBasename !== basename) return resolve(stateDir, basename);
+    return resolve(stateDir, legacyBasename);
+  }
+  return resolveHomePath(input, stateDir);
+}
+
+function resolveHomePath(input: string, base = process.cwd()): string {
+  const home = process.env.HOME || homedir();
+  if (input === "~") return home;
+  if (input.startsWith("~/")) return resolve(home, input.slice(2));
   return resolve(base, input);
+}
+
+function ensurePrivateDirectory(path: string, name: string): void {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: 0o700 });
+  const link = lstatSync(path);
+  if (link.isSymbolicLink()) throw new Error(`Refusing symlink ${name}: ${path}`);
+  const stat = statSync(path);
+  if (!stat.isDirectory()) throw new Error(`${name} must be a directory: ${path}`);
+  if (stat.uid === process.getuid?.() && (stat.mode & 0o077) !== 0) {
+    chmodSync(path, stat.mode & 0o700);
+  }
 }
 
 function validateWsUrl(wsUrl: string): void {

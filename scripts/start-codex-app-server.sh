@@ -10,14 +10,35 @@ fi
 
 PORT="${CODEXCLAW_PORT:-4500}"
 WORKSPACE_ROOT="${CODEXCLAW_WORKSPACE_ROOT:-$(pwd)}"
+if [[ "$WORKSPACE_ROOT" == "~" ]]; then
+  WORKSPACE_ROOT="$HOME"
+elif [[ "$WORKSPACE_ROOT" == "~/"* ]]; then
+  WORKSPACE_ROOT="$HOME/${WORKSPACE_ROOT#"~/"}"
+fi
+mkdir -p "$WORKSPACE_ROOT"
 WORKSPACE_ROOT="$(cd "$WORKSPACE_ROOT" && pwd -P)"
 STATE_DIR="${CODEXCLAW_STATE_DIR:-$WORKSPACE_ROOT/.codexclaw}"
+if [[ "$STATE_DIR" == "~" ]]; then
+  STATE_DIR="$HOME"
+elif [[ "$STATE_DIR" == "~/"* ]]; then
+  STATE_DIR="$HOME/${STATE_DIR#"~/"}"
+fi
 if [[ "$STATE_DIR" != /* ]]; then
   STATE_DIR="$WORKSPACE_ROOT/$STATE_DIR"
 fi
+mkdir -p "$STATE_DIR"
+chmod go-rwx "$STATE_DIR"
 TOKEN_FILE="${CODEXCLAW_CODEX_TOKEN_FILE:-$STATE_DIR/codex.token}"
+if [[ "$TOKEN_FILE" == "~" ]]; then
+  TOKEN_FILE="$HOME"
+elif [[ "$TOKEN_FILE" == "~/"* ]]; then
+  TOKEN_FILE="$HOME/${TOKEN_FILE#"~/"}"
+fi
+if [[ "$TOKEN_FILE" == ".codexclaw/codex.token" ]]; then
+  TOKEN_FILE="$STATE_DIR/codex.token"
+fi
 if [[ "$TOKEN_FILE" != /* ]]; then
-  TOKEN_FILE="$WORKSPACE_ROOT/$TOKEN_FILE"
+  TOKEN_FILE="$STATE_DIR/$TOKEN_FILE"
 fi
 LISTEN_URL="${CODEXCLAW_CODEX_WS:-ws://127.0.0.1:${PORT}}"
 

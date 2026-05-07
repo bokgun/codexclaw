@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getCodexConnectionConfig,
   getDiscordConfig,
   getRuntimePathConfig,
   getTelegramConfig,
@@ -21,11 +22,11 @@ afterEach(() => {
 });
 
 describe("Runtime path config", () => {
-  test("defaults state under the workspace and resolves explicit paths from the workspace", () => {
+  test("defaults state under the workspace and resolves explicit paths from the state dir", () => {
     const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
     process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
     process.env.CODEXCLAW_STATE_DIR = ".state/codexclaw";
-    process.env.CODEXCLAW_DB = ".state/codexclaw/pointers.sqlite";
+    process.env.CODEXCLAW_DB = "pointers.sqlite";
 
     const config = getRuntimePathConfig();
 
@@ -34,11 +35,78 @@ describe("Runtime path config", () => {
     expect(config.dbPath).toBe(join(workspace, ".state/codexclaw/pointers.sqlite"));
   });
 
-  test("rejects a workspace root that is not a directory", () => {
+  test("creates missing workspace and state directories", () => {
     const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
-    process.env.CODEXCLAW_WORKSPACE_ROOT = join(workspace, "missing");
+    const workspaceRoot = join(workspace, "missing", "project");
+    const stateDir = join(workspace, "state", "project");
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspaceRoot;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
 
-    expect(() => getRuntimePathConfig()).toThrow("CODEXCLAW_WORKSPACE_ROOT");
+    const config = getRuntimePathConfig();
+
+    expect(config.workspaceRoot).toBe(workspaceRoot);
+    expect(config.stateDir).toBe(stateDir);
+    expect(existsSync(workspaceRoot)).toBe(true);
+    expect(existsSync(stateDir)).toBe(true);
+    expect(statSync(stateDir).mode & 0o077).toBe(0);
+  });
+
+  test("resolves tilde-prefixed state paths from the user home", () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-home-")));
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = "~/.codexclaw/project";
+
+    const config = getRuntimePathConfig();
+
+    expect(config.stateDir).toBe(join(home, ".codexclaw/project"));
+    expect(existsSync(config.stateDir)).toBe(true);
+    process.env.HOME = previousHome;
+  });
+
+  test("resolves relative token and db paths from the state dir", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = join(workspace, ".state");
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_CODEX_TOKEN_FILE = "tokens/codex.token";
+    process.env.CODEXCLAW_DB = "db/codexclaw.sqlite";
+
+    const paths = getRuntimePathConfig();
+    const codex = getCodexConnectionConfig();
+
+    expect(paths.dbPath).toBe(join(stateDir, "db/codexclaw.sqlite"));
+    expect(codex.tokenFile).toBe(join(stateDir, "tokens/codex.token"));
+    expect(existsSync(codex.tokenFile)).toBe(true);
+  });
+
+  test("maps legacy .codexclaw token and db paths into the state dir", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = join(workspace, ".state");
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_CODEX_TOKEN_FILE = ".codexclaw/codex.token";
+    process.env.CODEXCLAW_DB = ".codexclaw/codexclaw.sqlite";
+
+    const paths = getRuntimePathConfig();
+    const codex = getCodexConnectionConfig();
+
+    expect(paths.dbPath).toBe(join(stateDir, "codexclaw.sqlite"));
+    expect(codex.tokenFile).toBe(join(stateDir, "codex.token"));
+  });
+
+  test("maps legacy .codexclaw/codexclaw.db to the default sqlite path", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = join(workspace, ".state");
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_DB = ".codexclaw/codexclaw.db";
+
+    const paths = getRuntimePathConfig();
+
+    expect(paths.dbPath).toBe(join(stateDir, "codexclaw.sqlite"));
   });
 });
 
@@ -122,6 +190,7 @@ describe("Wiki config", () => {
   test("loads optional wiki settings with bounded limits", () => {
     const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
     process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = join(workspace, ".state");
     process.env.CODEXCLAW_WIKI_ENABLED = "true";
     process.env.CODEXCLAW_WIKI_ROOT = "knowledge";
     process.env.CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS = "docs,README.md";
@@ -142,6 +211,9 @@ describe("Wiki config", () => {
   });
 
   test("rejects out-of-range wiki limits", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = join(workspace, ".state");
     process.env.CODEXCLAW_WIKI_MAX_QUERY_RESULTS = "100";
     expect(() => getWikiConfig()).toThrow("CODEXCLAW_WIKI_MAX_QUERY_RESULTS");
   });

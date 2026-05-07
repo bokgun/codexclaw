@@ -53,10 +53,10 @@ bun run schema:verify
 Required environment:
 
 - `CODEXCLAW_CODEX_WS`: Codex app-server WebSocket URL.
-- `CODEXCLAW_WORKSPACE_ROOT`: project directory where Codex should run. Defaults to the directory where codexclaw is started.
-- `CODEXCLAW_STATE_DIR`: codexclaw-owned state directory. Defaults to `<workspace>/.codexclaw`.
-- `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `<state-dir>/codex.token`, which `bun run start:codex` creates automatically for local development.
-- `CODEXCLAW_DB`: SQLite database path for codexclaw pointers, approvals, tasks, and prefs. Defaults to `<state-dir>/codexclaw.sqlite`.
+- `CODEXCLAW_WORKSPACE_ROOT`: project directory where Codex should run. Defaults to the directory where codexclaw is started and is created if missing.
+- `CODEXCLAW_STATE_DIR`: codexclaw-owned state directory. Defaults to `<workspace>/.codexclaw`, supports `~/.codexclaw/...`, and is created with private permissions.
+- `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `<state-dir>/codex.token`, which `bun run start:codex` creates automatically for local development. Relative paths resolve from the state dir.
+- `CODEXCLAW_DB`: SQLite database path for codexclaw pointers, approvals, tasks, and prefs. Defaults to `<state-dir>/codexclaw.sqlite`. Relative paths resolve from the state dir.
 
 `CODEXCLAW_WORKSPACE_ROOT` and `CODEXCLAW_STATE_DIR` are intentionally
 separate. The workspace is the project Codex can inspect and edit; the state
