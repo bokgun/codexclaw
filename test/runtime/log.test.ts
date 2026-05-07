@@ -61,6 +61,31 @@ describe("runtime log redaction", () => {
     });
   });
 
+  isolatedTest("bounds generic strings and nested metadata", () => {
+    const manyKeys: Record<string, string> = {};
+    for (let index = 0; index < 40; index += 1) {
+      manyKeys[`key${index}`] = "value";
+    }
+
+    const redacted = redactLogFields({
+      longValue: "x".repeat(1_050),
+      manyKeys,
+      nested: { a: { b: { c: { d: { e: "deep" } } } } }
+    });
+
+    expect(String(redacted.longValue)).toEndWith("...[truncated 50 chars]");
+    expect(redacted.manyKeys).toMatchObject({ _truncatedKeys: 8 });
+    expect(redacted.nested).toEqual({
+      a: {
+        b: {
+          c: {
+            d: { kind: "object", truncated: true }
+          }
+        }
+      }
+    });
+  });
+
   isolatedTest("writes JSON lines to stderr-compatible streams", () => {
     let output = "";
     const stream = new Writable({

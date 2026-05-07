@@ -34,6 +34,9 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
 
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|credential|cookie|api[_-]?key|signing)/i;
 const CONTENT_KEY_PATTERN = /(text|prompt|content|body|diff|patch|command|args|output|transcript|message)$/i;
+const MAX_STRING_CHARS = 1_000;
+const MAX_OBJECT_KEYS = 32;
+const MAX_DEPTH = 4;
 
 export function createJsonLineLogger(options: JsonLineLoggerOptions = {}): RuntimeLogger {
   const stream = options.stream ?? stderr;
@@ -77,17 +80,17 @@ export function redactLogFields(fields: LogFields): LogFields {
   const redacted: LogFields = {};
 
   for (const [key, value] of Object.entries(fields)) {
-    redacted[key] = redactLogValue(key, value);
+    redacted[key] = redactLogValue(key, value, 0);
   }
 
   return redacted;
 }
 
-function redactLogValue(key: string, value: LogFieldValue): LogFieldValue {
+function redactLogValue(key: string, value: LogFieldValue, depth: number): LogFieldValue {
   if (value === undefined) return undefined;
   if (SECRET_KEY_PATTERN.test(key)) return "[redacted]";
   if (CONTENT_KEY_PATTERN.test(key)) return summarizeContent(value);
-  if (typeof value === "string") return redactSecretLikeText(value);
+  if (typeof value === "string") return boundString(redactSecretLikeText(value));
 
   if (Array.isArray(value)) {
     return {
@@ -97,9 +100,14 @@ function redactLogValue(key: string, value: LogFieldValue): LogFieldValue {
   }
 
   if (value && typeof value === "object") {
+    if (depth >= MAX_DEPTH) return { kind: "object", truncated: true };
     const redacted: LogFields = {};
-    for (const [childKey, childValue] of Object.entries(value)) {
-      redacted[childKey] = redactLogValue(childKey, childValue);
+    const entries = Object.entries(value);
+    for (const [childKey, childValue] of entries.slice(0, MAX_OBJECT_KEYS)) {
+      redacted[childKey] = redactLogValue(childKey, childValue, depth + 1);
+    }
+    if (entries.length > MAX_OBJECT_KEYS) {
+      redacted._truncatedKeys = entries.length - MAX_OBJECT_KEYS;
     }
     return redacted;
   }
@@ -112,6 +120,11 @@ function summarizeContent(value: LogFieldValue): LogFieldValue {
   if (Array.isArray(value)) return { kind: "content_array", length: value.length };
   if (value && typeof value === "object") return { kind: "content_object" };
   return "[content omitted]";
+}
+
+function boundString(value: string): string {
+  if (value.length <= MAX_STRING_CHARS) return value;
+  return `${value.slice(0, MAX_STRING_CHARS)}...[truncated ${value.length - MAX_STRING_CHARS} chars]`;
 }
 
 function parseLogLevel(value: string): LogLevel {
