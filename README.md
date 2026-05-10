@@ -33,8 +33,16 @@ See [VISION.md](VISION.md) for the project vision.
 
 ## Fresh Clone Setup
 
-Install dependencies with Bun, inspect the installer plan, then start a local
-Codex app-server and CLI:
+Recommended setup starts with an isolated `codex app-server` runtime. Use
+Docker Engine/Desktop, Apple Container, or an equivalent container runtime to
+keep the Codex workspace, codexclaw state, bearer token, and database on clear
+mount boundaries. See [Container reference](docs/deploy/container.md) before
+running a remote channel.
+
+Local smoke path:
+
+Install dependencies with Bun, inspect the installer plan, then start a
+loopback Codex app-server and CLI:
 
 ```sh
 bun install
@@ -55,6 +63,13 @@ Inside the CLI, useful first commands are:
 If you prefer manual setup, copy `.env.example` to `.env` and edit the same
 settings there. Keep `/project` available for future multi-workspace routing;
 use `CODEXCLAW_WORKSPACE_ROOT` for the project Codex should inspect and edit.
+
+Bare-metal loopback setup is intended for development and first smoke tests.
+For Telegram, Discord, shared hosts, or any non-loopback access, prefer the
+container isolation path plus [WSS reverse proxy](docs/deploy/wss-reverse-proxy.md).
+That path is: choose the container runtime, prepare the workspace/state/token/db
+mounts from [Container reference](docs/deploy/container.md), run the installer
+with matching absolute paths, then start the selected channel.
 
 Verify the pinned app-server schema before runtime work:
 

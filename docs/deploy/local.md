@@ -1,6 +1,10 @@
 # Local Deployment
 
-This path runs codexclaw and `codex app-server` on the same machine with a loopback WebSocket. It is the default mode for a fresh clone.
+This path runs codexclaw and `codex app-server` on the same machine with a
+loopback WebSocket. It is the fastest development smoke, but it is not the
+recommended shape for channel adapters or shared hosts. For user-facing setup,
+prefer starting with [Container Reference](./container.md) so the app-server
+runs behind explicit filesystem and network boundaries.
 
 ```sh
 bun install

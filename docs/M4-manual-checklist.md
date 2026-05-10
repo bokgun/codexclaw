@@ -4,9 +4,22 @@ Use this checklist before cutting an M4 or v1.0 release candidate. It assumes
 dependencies are installed locally and any remote-channel credentials are
 available only in the operator's private environment.
 
-## 1. Fresh Clone Setup
+## 1. Fresh Clone And Isolation Setup
 
-- [ ] Clone the repository and enter it.
+- [ ] Create a disposable validation workspace outside the development checkout,
+  for example `/Users/<name>/TempWorkspace/codexclaw-m4-smoke`.
+- [ ] Clone the repository into that disposable workspace and enter it.
+- [ ] Choose the app-server isolation path before installer setup: Docker
+  Engine/Desktop, Apple Container, or an equivalent runtime. Use bare-metal
+  `local_loopback` only as a development smoke fallback.
+- [ ] Read [Container Reference](deploy/container.md) and decide the workspace,
+  state, token, and SQLite mount locations before answering installer prompts.
+- [ ] Use absolute paths when answering installer prompts. Do not put `~` in the
+  middle of a path, because only a leading `~` is shell-expanded.
+- [ ] If Codex reports that project-local config, hooks, or exec policies are
+  disabled, record the warning by default. Trust project-local Codex config only
+  after auditing those files and hooks, and only while running inside the
+  selected isolated runtime without broad host secret mounts.
 - [ ] Install dependencies:
 
   ```sh
@@ -28,7 +41,7 @@ available only in the operator's private environment.
 
 - [ ] Confirm `.env` is created with private permissions.
 - [ ] Confirm `CODEXCLAW_WORKSPACE_ROOT` points at the project Codex should
-  inspect and edit.
+  inspect and edit, matching the container workspace mount if isolation is used.
 - [ ] Confirm `CODEXCLAW_STATE_DIR` stays outside the workspace unless this is
   disposable local development with both local-dev opt-ins enabled.
 
@@ -52,15 +65,38 @@ available only in the operator's private environment.
   bun test
   ```
 
-## 3. Local Runtime Smoke
+## 3. Container Isolation Preparation
 
-- [ ] Start the app-server helper:
+- [ ] Build or prepare the reference container from [Container Reference](deploy/container.md).
+- [ ] Mount only the project directory Codex should edit as the workspace.
+- [ ] Confirm `CODEXCLAW_WORKSPACE_ROOT` is the same absolute path from host
+  codexclaw and inside the app-server runtime.
+- [ ] Keep codexclaw state and SQLite on the host or codexclaw runtime, outside
+  the Codex-editable workspace.
+- [ ] For split-container setups, mount only the read-only token file into the
+  app-server runtime; do not mount the codexclaw state directory or SQLite
+  database there.
+- [ ] Confirm the container does not mount broad host paths such as `$HOME`,
+  host secrets, Docker sockets, SSH agents, or cloud credential directories.
+- [ ] Run the containerized app-server as a non-root user where the selected
+  runtime supports it.
+- [ ] Confirm plaintext `ws://` app-server access is loopback-only or internal
+  to the container/network namespace. For Docker, do not publish with
+  `-p 4500:4500`; bind to `127.0.0.1` or keep the service internal.
+- [ ] For non-loopback or external access, expose only WSS through the reverse
+  proxy and keep `CODEXCLAW_DEPLOYMENT_MODE=reverse_proxy_wss`.
+
+## 4. App-Server Runtime Smoke
+
+- [ ] Start the isolated app-server runtime selected in section 1. For the
+  bare-metal development fallback, start the app-server helper:
 
   ```sh
   bun run start:codex
   ```
 
-- [ ] Check readiness from another shell:
+- [ ] Check readiness from another shell or from the host side of the selected
+  runtime:
 
   ```sh
   curl -fsS http://127.0.0.1:4500/readyz
@@ -93,7 +129,7 @@ available only in the operator's private environment.
   /quit
   ```
 
-## 4. Remote Channel Smoke
+## 5. Remote Channel Smoke
 
 - [ ] Configure exactly one remote channel with private credentials:
   Telegram or Discord.
@@ -117,7 +153,7 @@ available only in the operator's private environment.
 - [ ] Send a message from a non-allowed user if safely available and confirm it
   is rejected before routing.
 
-## 5. Deployment Notes
+## 6. Deployment Notes
 
 - [ ] For non-loopback access, use
   [WSS reverse proxy](deploy/wss-reverse-proxy.md) and confirm
@@ -130,7 +166,7 @@ available only in the operator's private environment.
   [Raspberry Pi Smoke Path](deploy/raspberry-pi-smoke.md) and record Bun,
   Codex CLI, CPU architecture, and memory details for failures.
 
-## 6. Release Review
+## 7. Release Review
 
 - [ ] Review JSON-line stderr logs using [Logging](logging.md).
 - [ ] Confirm codexclaw stores only pointer, label, schedule, approval mapping,
