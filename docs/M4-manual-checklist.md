@@ -16,7 +16,7 @@ available only in the operator's private environment.
   state, token, and SQLite mount locations before answering installer prompts.
 - [x] Use absolute paths when answering installer prompts. Do not put `~` in the
   middle of a path, because only a leading `~` is shell-expanded.
-- [ ] If Codex reports that project-local config, hooks, or exec policies are
+- [x] If Codex reports that project-local config, hooks, or exec policies are
   disabled, record the warning by default. Trust project-local Codex config only
   after auditing those files and hooks, and only while running inside the
   selected isolated runtime without broad host secret mounts.
@@ -108,11 +108,11 @@ available only in the operator's private environment.
   scripts/docker-compose-codex.sh build codex-app-server
   ```
 
-- [ ] If the isolated container Codex auth volume is not logged in, initialize
+- [x] If the isolated container Codex auth volume is not logged in, initialize
   it without mounting broad host credentials:
 
   ```sh
-  scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+  scripts/docker-compose-codex.sh run --rm codex-app-server codex login --device-auth
   ```
 
 - [x] Mount only the project directory Codex should edit as the workspace.
@@ -153,7 +153,7 @@ available only in the operator's private environment.
 
 ## 4. App-Server Runtime Smoke
 
-- [ ] Start the isolated app-server runtime selected in section 1. For the
+- [x] Start the isolated app-server runtime selected in section 1. For the
   Docker reference:
 
   ```sh
@@ -166,7 +166,7 @@ available only in the operator's private environment.
   bun run start:codex
   ```
 
-- [ ] Check readiness from another shell or from the host side of the selected
+- [x] Check readiness from another shell or from the host side of the selected
   runtime:
 
   ```sh

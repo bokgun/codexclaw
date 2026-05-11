@@ -81,8 +81,12 @@ Initialize Codex CLI authentication inside the isolated container-owned auth
 volume if the app-server has not already been logged in there:
 
 ```sh
-scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+scripts/docker-compose-codex.sh run --rm codex-app-server codex login --device-auth
 ```
+
+Prefer `--device-auth` for container login. It lets the operator complete the
+browser/device-code step from the host while keeping the resulting Codex CLI
+auth material in the isolated container-owned volume.
 
 Check that the final non-root `codex` user can write to the mounted workspace:
 
@@ -120,7 +124,8 @@ Use `scripts/docker-compose-codex.sh` instead of raw `docker compose` so relativ
 or legacy `.env` token paths are resolved exactly like codexclaw runtime paths
 before Compose reads them.
 
-The Dockerfile pins `@openai/codex@0.128.0`, runs as UID/GID `10001`, and starts
+The Dockerfile pins `@openai/codex@0.128.0`, installs Codex sandbox
+prerequisites including `bubblewrap`, runs as UID/GID `10001`, and starts
 `codex app-server` with:
 
 ```text
@@ -193,8 +198,9 @@ that starts the local app-server helper.
 ## Codex Authentication Boundary
 
 The default Docker path uses an isolated named volume for `/home/codex/.codex`.
-Run `scripts/docker-compose-codex.sh run --rm codex-app-server codex login` to
-authenticate that volume through the normal entrypoint, which fixes ownership
+Run
+`scripts/docker-compose-codex.sh run --rm codex-app-server codex login --device-auth`
+to authenticate that volume through the normal entrypoint, which fixes ownership
 before dropping to the non-root `codex` user. This avoids mounting broad host
 home directories, cloud credential directories, SSH agents, Docker sockets, or
 unrelated host secrets into the app-server container.
@@ -249,6 +255,68 @@ home directory, SSH agent, cloud credential directory, or Docker socket should
 be mounted into the app-server container.
 
 The state directory and token file must not be symlinks. codexclaw refuses symlink state, token, and database paths. Avoid symlinks from the workspace into `/state` or from `/state` back into the workspace, because they blur the boundary between Codex-editable files and codexclaw-owned metadata.
+
+## Apple Container Quick Start
+
+The Apple Container reference wrapper mirrors the Docker wrapper path policy.
+Use a checkout under a normal user directory, such as
+`/Users/<name>/TempWorkspace/codexclaw`; Apple Container build context handling
+has been observed to fail from `/private/tmp` by sending an empty build context.
+
+Build the image:
+
+```sh
+scripts/apple-container-codex.sh build
+```
+
+Initialize Codex CLI authentication inside an Apple Container-owned named
+volume:
+
+```sh
+scripts/apple-container-codex.sh login
+```
+
+The login command runs `codex login --device-auth` inside the container so the
+operator can complete the browser/device-code step from the host while the
+resulting Codex auth stays in the isolated Apple Container volume.
+
+Check the runtime user, sandbox prerequisite, and workspace write access:
+
+```sh
+scripts/apple-container-codex.sh run sh -lc 'id && which bwrap && touch .codexclaw-apple-container-write-test && rm .codexclaw-apple-container-write-test'
+```
+
+Start the app-server:
+
+```sh
+scripts/apple-container-codex.sh up
+```
+
+From another host shell, check readiness and use host codexclaw against the
+loopback-published app-server:
+
+```sh
+curl -fsS http://127.0.0.1:4500/readyz
+CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500 bun run cli
+```
+
+Inspect or stop the Apple Container runtime:
+
+```sh
+scripts/apple-container-codex.sh inspect
+scripts/apple-container-codex.sh logs
+scripts/apple-container-codex.sh down
+```
+
+By default the wrapper uses image `codexclaw/codex-app-server:0.128.0`,
+container name `codexclaw-codex-app-server`, and auth volume
+`codexclaw-codex-app-server-home`. Apple Container directory bind mounts are
+used for the token boundary: the wrapper copies the host token into a dedicated
+`CODEXCLAW_STATE_DIR/apple-container-token/codex.token` staging directory and
+mounts only that directory read-only at `/run/secrets`. It also mounts
+`CODEXCLAW_WORKSPACE_ROOT` and the isolated Codex auth volume. It does not mount
+the codexclaw state directory, SQLite database, host home directory, SSH agent,
+cloud credential directories, Docker socket, or broad host secrets.
 
 ## Network Shape
 

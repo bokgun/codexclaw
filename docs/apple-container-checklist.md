@@ -65,6 +65,10 @@ used during the smoke run.
 
 - [x] Build an Apple Container-compatible runtime image or unit from the
   repository `Dockerfile`, or document the equivalent build artifact used.
+
+  ```sh
+  scripts/apple-container-codex.sh build
+  ```
 - [x] Confirm the build pins Codex CLI to the same version as the repository
   schema gate.
 - [x] Confirm the app-server command uses capability-token auth and a token file:
@@ -96,6 +100,10 @@ used during the smoke run.
 
 - [ ] Initialize Codex CLI authentication inside Apple Container-owned isolated
   auth storage.
+
+  ```sh
+  scripts/apple-container-codex.sh login
+  ```
 - [ ] Do not satisfy authentication by mounting the operator's whole host home
   directory.
 - [ ] If a read-only Codex auth config mount is used, confirm it contains only
@@ -105,6 +113,10 @@ used during the smoke run.
 ## 6. Runtime Smoke
 
 - [ ] Start `codex app-server` inside Apple Container.
+
+  ```sh
+  scripts/apple-container-codex.sh up
+  ```
 - [ ] Confirm plaintext app-server access is loopback-only or internal to the
   runtime namespace. Do not expose `ws://` on all host interfaces.
 - [ ] Check readiness from the host:
@@ -116,8 +128,7 @@ used during the smoke run.
 - [ ] Confirm the runtime user can write to the mounted workspace:
 
   ```sh
-  touch "$CODEXCLAW_WORKSPACE_ROOT/.codexclaw-apple-container-write-test"
-  rm "$CODEXCLAW_WORKSPACE_ROOT/.codexclaw-apple-container-write-test"
+  scripts/apple-container-codex.sh run sh -lc 'id && which bwrap && touch .codexclaw-apple-container-write-test && rm .codexclaw-apple-container-write-test'
   ```
 
 - [ ] Prefer a runtime-internal write probe when Apple Container supports
@@ -163,4 +174,8 @@ used during the smoke run.
   - `smoke_verified`, if every required checklist item passed
   - `documented_only`, if any required item was skipped or unavailable
 - [ ] Stop and remove the Apple Container runtime unit.
+
+  ```sh
+  scripts/apple-container-codex.sh down
+  ```
 - [ ] Confirm the disposable workspace contains only expected files.

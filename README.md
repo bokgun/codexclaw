@@ -65,7 +65,7 @@ umask 077
 test -f "$CODEXCLAW_CODEX_TOKEN_FILE" || openssl rand -hex 32 > "$CODEXCLAW_CODEX_TOKEN_FILE"
 chmod 600 "$CODEXCLAW_CODEX_TOKEN_FILE"
 scripts/docker-compose-codex.sh build codex-app-server
-scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+scripts/docker-compose-codex.sh run --rm codex-app-server codex login --device-auth
 scripts/docker-compose-codex.sh run --rm codex-app-server sh -lc 'touch .codexclaw-container-write-test && rm .codexclaw-container-write-test'
 scripts/docker-compose-codex.sh up codex-app-server
 ```
@@ -73,6 +73,9 @@ scripts/docker-compose-codex.sh up codex-app-server
 Use `scripts/docker-compose-codex.sh` rather than raw `docker compose`; it
 resolves `.env` paths with the same workspace/state/token rules as codexclaw
 before invoking Compose.
+Use `codex login --device-auth` for container login so the browser/device-code
+step happens on the host while the resulting Codex auth stays in the isolated
+container volume.
 
 In another shell, use host codexclaw against the loopback-only published
 app-server:
@@ -89,6 +92,20 @@ into the app-server container. Apple Container is documented-only until a smoke
 run is recorded. On Linux, make sure the mounted workspace is writable by
 container UID/GID `10001`; the write probe above verifies that before app-server
 startup.
+
+Apple Container reference path:
+
+```sh
+scripts/apple-container-codex.sh build
+scripts/apple-container-codex.sh login
+scripts/apple-container-codex.sh run sh -lc 'id && which bwrap && touch .codexclaw-apple-container-write-test && rm .codexclaw-apple-container-write-test'
+scripts/apple-container-codex.sh up
+```
+
+The Apple Container wrapper uses the same workspace/state/token path rules as
+the Docker wrapper, stores Codex auth in an Apple Container named volume, mounts
+only the workspace and read-only token file, and publishes app-server on
+`127.0.0.1:4500`.
 
 Local smoke path:
 
