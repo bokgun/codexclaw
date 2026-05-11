@@ -2,11 +2,14 @@
 
 ## Goal
 
-Make Telegram approval buttons survive `bun run telegram` restarts when the
-underlying Codex app-server can still accept the pending approval response.
-Callbacks from already-sent approval messages should recover from codexclaw's
-SQLite pending approval mapping, validate Telegram user/chat/message identity,
-and send the intended approve or reject decision to Codex.
+Make Telegram approval button memory misses recover when the current host
+process can prove the pending approval row belongs to the same app-server
+interaction. Callbacks from already-sent approval messages should recover from
+codexclaw's SQLite pending approval mapping, validate Telegram
+user/chat/message identity, and send the intended approve or reject decision to
+Codex only when app-server continuity is not ambiguous. Cold `bun run telegram`
+restart recovery remains blocked until the pinned app-server protocol exposes a
+usable continuity proof.
 
 ## PRD References
 
@@ -29,13 +32,15 @@ and send the intended approve or reject decision to Codex.
 
 ## Scope
 
-- Recover Telegram approval callbacks after Telegram runtime restart using the
-  existing `pending_approvals` table as the durable recovery source.
+- Recover Telegram approval callback memory misses using the existing
+  `pending_approvals` table as the recovery source.
 - Preserve the current in-memory fast path for callbacks handled before restart.
 - Add a persistent lookup and single-use claim path keyed by Telegram prompt
   `channelMessageId`.
 - Preserve the original JSON-RPC request id type when recovering persisted
   approvals.
+- Bind recoverable pending rows to a host-process instance id so another
+  codexclaw process sharing the same SQLite database cannot answer them.
 - Rebind recovered thread output to the Telegram chat before sending a recovered
   approval response to Codex.
 - Keep approve/reject semantics identical to live callbacks.
@@ -56,7 +61,9 @@ and send the intended approve or reject decision to Codex.
 - No Discord callback recovery in this plan.
 - No Telegram file upload support; file delivery is a separate feature.
 - No promise of recovery if Codex app-server discards the pending JSON-RPC
-  request across WebSocket reconnect or app-server restart.
+  request across WebSocket reconnect or app-server restart. If the pinned
+  app-server protocol cannot prove server continuity, cold Telegram runtime
+  restarts must fail closed for old persisted rows.
 
 ## Ordered Tasks
 
@@ -80,8 +87,8 @@ and send the intended approve or reject decision to Codex.
    - Dependencies: task 1.
    - Use only pending approval domain fields:
      `channel_msg_id`, `user_key`, `thread_id`, `jsonrpc_id`,
-     `approval_kind`, `channel`, `expires_at`, `created_at`, plus a bounded
-     request-id type discriminator if needed.
+     `approval_kind`, `channel`, `expires_at`, `created_at`, a bounded
+     request-id type discriminator, and a process-local host instance id.
    - Preserve JSON-RPC request id type explicitly. The current text column is
      not sufficient by itself if Codex matches response ids by exact JSON value.
    - Add schema only for request-id type preservation or if a required identity
@@ -99,6 +106,8 @@ and send the intended approve or reject decision to Codex.
      one process can send a recovered Codex response.
    - Wrong-user, wrong-channel, and malformed recovery attempts must not consume
      a valid pending row.
+   - Rows created by a different host instance must not consume a valid pending
+     row and must not send a Codex approval response.
    - Expired rows should be claimable for fail-closed cleanup or separately
      identifiable as expired.
    - Store tests must prove schema boundaries, JSON-RPC id type preservation,
@@ -114,7 +123,7 @@ and send the intended approve or reject decision to Codex.
      malformed recovery metadata.
    - Before sending a recovered response to Codex, rebind the recovered thread id
      to the callback's channel target so subsequent agent/status output can
-     route back to the original Telegram chat after restart.
+     route back to the original Telegram chat for current-process memory misses.
    - Recovered approve sends the same accept response shape as live approve.
    - Recovered reject sends the same decline response shape as live reject.
    - Expired recovered callbacks decline safely when Codex can still accept the
@@ -145,14 +154,14 @@ and send the intended approve or reject decision to Codex.
 
 7. Reconcile pending approvals on startup and expiry.
    - Dependencies: tasks 3-4.
-   - Startup must not delete valid unexpired rows.
-   - Expiry handling should account for rows persisted by a previous process.
+   - Startup must not delete rows persisted by another process.
+   - Expiry handling should account for rows persisted by a previous process by
+     leaving them fail-closed unless app-server continuity can be proven.
    - `ApprovalBridge.expirePending()` should not silently delete restarted rows
-     when a safe decline is possible.
+     that lack the current host instance id.
    - Cleanup remains bounded to the `pending_approvals` table.
-   - Add tests for a fresh process starting with persisted unexpired and expired
-     rows: unexpired rows remain recoverable, while expired rows are declined
-     and deleted only through the intended safe path.
+   - Add tests for a fresh process starting with persisted rows: old rows remain
+     present for audit/diagnosis but are not recoverable or sent to Codex.
 
 8. Handle duplicate Telegram long-polling processes.
    - Dependencies: Telegram adapter API error handling and task 3.
@@ -164,11 +173,11 @@ and send the intended approve or reject decision to Codex.
 
 9. Update tests and docs.
    - Dependencies: tasks 1-8.
-   - Update README and M2 docs to state approval callbacks are recoverable after
-     Telegram runtime restart when the app-server still holds the pending
-     request.
-   - Document residual limits: app-server restart, expired approvals, missing
-     callback messages, and duplicate long-polling processes.
+   - Update README and M2 docs to state current-process approval callback memory
+     misses can recover through the pending approval mapping.
+   - Document residual limits: cold Telegram runtime restart, app-server
+     restart, expired approvals, missing callback messages, and duplicate
+     long-polling processes.
 
 ## Dependencies
 
@@ -220,6 +229,7 @@ type PendingApprovalRecordSketch = {
   threadId: string;
   jsonrpcId: string;
   jsonrpcIdType: "number" | "string";
+  hostInstanceId: string;
   approvalKind: string;
   channel: "cli" | "telegram" | "discord";
   expiresAt: string;
@@ -233,7 +243,7 @@ type ClaimedPendingApprovalSketch =
 
 type RecoveryValidationSketch =
   | { kind: "valid"; record: PendingApprovalRecordSketch }
-  | { kind: "mismatch"; reason: "user" | "channel" | "thread" | "malformed" }
+  | { kind: "mismatch"; reason: "user" | "channel" | "thread" | "host" | "malformed" }
   | { kind: "missing" };
 ```
 
@@ -314,13 +324,16 @@ before recovered Codex response:
 
 ## Validation Criteria
 
-- Old Telegram approval buttons sent before `bun run telegram` restart recover
-  when the Codex app-server still has the pending request.
+- Approval button memory misses recover only when the pending row was created
+  by the current host process, the host instance id matches, and app-server
+  continuity is not ambiguous.
+- Old Telegram approval buttons sent before `bun run telegram` restart fail
+  closed until the app-server protocol exposes a usable continuity proof.
 - Recovered approve/reject decisions reach Codex using existing approval
   response mechanics.
 - Recovered JSON-RPC request ids preserve their original number/string type.
 - Recovered approval flow rebinds thread output so post-approval agent/status
-  output reaches the original Telegram chat after restart.
+  output reaches the original Telegram chat for current-process memory misses.
 - Recovered callbacks do not persist forbidden content and do not weaken Codex
   approval policy.
 - Expired approvals fail closed with decline, not approval.

@@ -210,6 +210,35 @@ describe("DiscordChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("rejects approval component callbacks exactly at expiry", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.requestApproval({
+      approvalId: "approval-1",
+      userKey: "discord:42",
+      threadId: "thread-1",
+      prompt: "Run command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:00:00.000Z",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.processInteraction(interaction({
+      type: 3,
+      id: "i2",
+      userId: "42",
+      channelId: "100",
+      messageId: "1",
+      data: { custom_id: "cc:a:k1:approve" }
+    }));
+    const routed = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.callbacks.at(-1)?.response).toEqual({ type: 4, data: { content: "Approval expired.", flags: 64 } });
+    await adapter.close();
+  });
+
   test("accepts local text approval responses without Discord interactions", async () => {
     const api = new FakeDiscordApi();
     const adapter = adapterWith(api);

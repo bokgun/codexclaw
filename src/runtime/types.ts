@@ -101,6 +101,8 @@ export interface PendingApprovalRecord {
   userKey: UserKey;
   threadId: ThreadId;
   jsonrpcId: string;
+  jsonrpcIdType: "number" | "string";
+  hostInstanceId?: string;
   approvalKind: string;
   channel: ChannelName;
   expiresAt: TimestampIso;

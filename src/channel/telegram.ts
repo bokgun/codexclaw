@@ -389,6 +389,14 @@ export class TelegramChannelAdapter implements ChannelAdapter {
         }
       } catch (error) {
         if (this.closed || this.abort.signal.aborted) return;
+        if (isTelegramPollingConflict(error)) {
+          this.logger.error("telegram_polling_conflict", {
+            error: redactTelegramSecrets(error instanceof Error ? error.message : String(error), this.config.botToken),
+            action: "stopped"
+          });
+          this.stopAfterPollingConflict();
+          return;
+        }
         this.logger.warn("telegram_poll_failed", {
           error: redactTelegramSecrets(error instanceof Error ? error.message : String(error), this.config.botToken)
         });
@@ -462,7 +470,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   ): Promise<void> {
     const pending = this.pendingApprovals.get(key);
     if (!pending || !callback.message) {
-      await this.api.answerCallbackQuery({ callback_query_id: callback.id, text: "Approval expired or unknown." });
+      await this.processRecoveredApprovalCallback(callback, key, action);
       return;
     }
     if (!this.callbackMatchesPending(callback, pending)) {
@@ -506,6 +514,46 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     this.pendingApprovals.delete(key);
     this.approvals.push(this.buildApprovalResponse(pending, action));
     await this.api.answerCallbackQuery({ callback_query_id: callback.id, text: action === "approve" ? "Approved." : "Rejected." });
+  }
+
+  private async processRecoveredApprovalCallback(
+    callback: TelegramCallbackQuery,
+    key: string,
+    action: ApprovalDecision
+  ): Promise<void> {
+    if (!callback.message) {
+      await this.api.answerCallbackQuery({ callback_query_id: callback.id, text: "Approval expired or unknown." });
+      return;
+    }
+
+    const channelMessageId = telegramMessageId(callback.message.chat.id, callback.message.message_id);
+    const userKey = telegramUserKey(callback.from.id);
+    const channelThreadKey = telegramChannelThreadKey(callback.message.chat.id);
+    this.approvals.push({
+      approvalId: key,
+      channelMessageId,
+      userKey,
+      decision: action,
+      receivedAt: this.now().toISOString(),
+      channelThreadKey,
+      recovery: {
+        channel: this.name,
+        channelMessageId
+      }
+    });
+
+    this.logger.info("telegram_approval_callback_recovery_attempt", {
+      userKey,
+      channelMessageId,
+      decision: action
+    });
+    await this.api.answerCallbackQuery({
+      callback_query_id: callback.id,
+      text:
+        action === "modify"
+          ? "Modify is unavailable after restart. The approval will be rejected; send a fresh instruction."
+          : "Approval response received."
+    });
   }
 
   private async processBranchCallback(
@@ -595,7 +643,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   }
 
   private isExpired(expiresAt: string): boolean {
-    return this.now().toISOString() > expiresAt;
+    return this.now().toISOString() >= expiresAt;
   }
 
   private clearBranchSuggestion(key: string, pending: PendingBranchSuggestion): void {
@@ -680,6 +728,20 @@ export class TelegramChannelAdapter implements ChannelAdapter {
       const removed = this.recentUpdates.shift();
       if (removed !== undefined) this.recentUpdateSet.delete(removed);
     }
+  }
+
+  private stopAfterPollingConflict(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.abort.abort();
+    for (const state of this.pendingModifyByPromptMessage.values()) clearTimeout(state.timeout);
+    for (const pending of this.pendingBranchSuggestions.values()) clearTimeout(pending.timeout);
+    for (const buffer of this.deltaBuffers.values()) {
+      if (buffer.timer) clearTimeout(buffer.timer);
+    }
+    this.messages.close();
+    this.approvals.close();
+    this.branchSuggestions.close();
   }
 }
 
@@ -767,6 +829,11 @@ function chunkText(text: string, limit: number): readonly string[] {
 
 function defaultKeyFactory(): string {
   return randomBytes(8).toString("hex");
+}
+
+function isTelegramPollingConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b409\b.*conflict|conflict: terminated by other getUpdates request|terminated by other getUpdates request/i.test(message);
 }
 
 function delay(ms: number): Promise<void> {

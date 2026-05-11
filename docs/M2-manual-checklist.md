@@ -42,12 +42,21 @@ mode.
 - `Modify` immediately rejects the original approval through core delayed Modify
   state, asks for a reply with changed instructions, then submits that reply as
   the follow-up instruction if it arrives before timeout.
+- Approval callback memory misses use the stored pending approval mapping and
+  Telegram prompt message id. Cold `bun run telegram` restarts fail closed for
+  old persisted approval rows until the app-server protocol exposes a usable
+  continuity proof.
 
 ## Security Notes
 
 - Bot tokens stay in Telegram runtime configuration and are not passed to Codex
   app-server as turn input or tool environment.
 - Callback data contains only opaque short keys plus an action name.
-- Long-polling offsets and Telegram callback correlation state are in memory
-  only. After restart, Telegram may replay the last unconfirmed update, and old
-  callbacks answer as expired or unknown.
+- Long-polling offsets and live Telegram callback correlation state are in
+  memory only. Approval callback recovery uses only the SQLite pending approval
+  mapping and Telegram prompt message id; it does not persist prompt text,
+  commands, diffs, callback payload history, or approval decisions.
+- Approval callback recovery is not guaranteed after Codex app-server restart,
+  cold Telegram runtime restart, another host process creating the pending row,
+  missing callback messages, or duplicate long-polling consumers. Expired
+  recovered callbacks can only recover to a safe decline.

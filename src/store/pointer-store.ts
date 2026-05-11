@@ -16,7 +16,7 @@ import type {
   UserKey
 } from "../runtime/types.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 6;
 
 interface ThreadRow {
   user_key: string;
@@ -37,6 +37,8 @@ interface PendingApprovalRow {
   user_key: string;
   thread_id: string;
   jsonrpc_id: string;
+  jsonrpc_id_type: "number" | "string";
+  host_instance_id: string | null;
   approval_kind: string;
   channel: ChannelName;
   expires_at: string;
@@ -90,9 +92,32 @@ export interface SavePendingApprovalInput {
   userKey: UserKey;
   threadId: ThreadId;
   jsonrpcId: string;
+  jsonrpcIdType?: "number" | "string";
+  hostInstanceId?: string;
   approvalKind: string;
   channel: ChannelName;
   expiresAt: TimestampIso;
+}
+
+export type PendingApprovalValidation =
+  | { kind: "valid"; record: PendingApprovalRecord }
+  | { kind: "expired"; record: PendingApprovalRecord }
+  | { kind: "mismatch"; reason: "user" | "channel" | "thread" | "host"; record: PendingApprovalRecord }
+  | { kind: "missing" };
+
+export type PendingApprovalClaim =
+  | { kind: "claimed"; record: PendingApprovalRecord }
+  | { kind: "expired"; record: PendingApprovalRecord }
+  | { kind: "mismatch"; reason: "user" | "channel" | "thread" | "host"; record: PendingApprovalRecord }
+  | { kind: "missing" };
+
+export interface PendingApprovalRecoveryInput {
+  channelMsgId: string;
+  userKey: UserKey;
+  channel: ChannelName;
+  now?: TimestampIso;
+  threadId?: ThreadId;
+  hostInstanceId?: string;
 }
 
 export interface CreateTaskInput {
@@ -251,12 +276,14 @@ export class PointerStore {
     this.db
       .query(
         `insert into pending_approvals (
-          channel_msg_id, user_key, thread_id, jsonrpc_id, approval_kind, channel, expires_at, created_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+          channel_msg_id, user_key, thread_id, jsonrpc_id, jsonrpc_id_type, host_instance_id, approval_kind, channel, expires_at, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(channel_msg_id) do update set
           user_key = excluded.user_key,
           thread_id = excluded.thread_id,
           jsonrpc_id = excluded.jsonrpc_id,
+          jsonrpc_id_type = excluded.jsonrpc_id_type,
+          host_instance_id = excluded.host_instance_id,
           approval_kind = excluded.approval_kind,
           channel = excluded.channel,
           expires_at = excluded.expires_at`
@@ -266,6 +293,8 @@ export class PointerStore {
         input.userKey,
         input.threadId,
         input.jsonrpcId,
+        input.jsonrpcIdType ?? "string",
+        input.hostInstanceId ?? null,
         input.approvalKind,
         input.channel,
         input.expiresAt,
@@ -280,6 +309,29 @@ export class PointerStore {
       .query<PendingApprovalRow, [string]>(`select * from pending_approvals where channel_msg_id = ?`)
       .get(channelMsgId);
     return row ? pendingApprovalFromRow(row) : undefined;
+  }
+
+  validatePendingApproval(input: PendingApprovalRecoveryInput): PendingApprovalValidation {
+    const record = this.getPendingApproval(input.channelMsgId);
+    if (!record) return { kind: "missing" };
+    const mismatch = pendingApprovalMismatch(record, input);
+    if (mismatch) return { kind: "mismatch", reason: mismatch, record };
+    if (record.expiresAt <= (input.now ?? new Date().toISOString())) return { kind: "expired", record };
+    return { kind: "valid", record };
+  }
+
+  claimPendingApproval(input: PendingApprovalRecoveryInput): PendingApprovalClaim {
+    return this.transaction(() => {
+      const record = this.getPendingApproval(input.channelMsgId);
+      if (!record) return { kind: "missing" };
+      const mismatch = pendingApprovalMismatch(record, input);
+      if (mismatch) return { kind: "mismatch", reason: mismatch, record };
+
+      const deleted = this.deletePendingApproval(input.channelMsgId);
+      if (!deleted) return { kind: "missing" };
+      if (record.expiresAt <= (input.now ?? new Date().toISOString())) return { kind: "expired", record };
+      return { kind: "claimed", record };
+    });
   }
 
   deletePendingApproval(channelMsgId: string): boolean {
@@ -477,6 +529,8 @@ export class PointerStore {
           user_key text not null,
           thread_id text not null,
           jsonrpc_id text not null,
+          jsonrpc_id_type text not null default 'string' check(jsonrpc_id_type in ('number', 'string')),
+          host_instance_id text,
           approval_kind text not null,
           channel text not null,
           expires_at text not null,
@@ -522,6 +576,12 @@ export class PointerStore {
       const pendingApprovalColumns = this.schemaColumns("pending_approvals");
       if (!pendingApprovalColumns.includes("channel")) {
         this.db.exec(`alter table pending_approvals add column channel text not null default 'cli'`);
+      }
+      if (!pendingApprovalColumns.includes("jsonrpc_id_type")) {
+        this.db.exec(`alter table pending_approvals add column jsonrpc_id_type text not null default 'string' check(jsonrpc_id_type in ('number', 'string'))`);
+      }
+      if (!pendingApprovalColumns.includes("host_instance_id")) {
+        this.db.exec(`alter table pending_approvals add column host_instance_id text`);
       }
 
       const taskColumns = this.schemaColumns("tasks");
@@ -615,11 +675,24 @@ function pendingApprovalFromRow(row: PendingApprovalRow): PendingApprovalRecord 
     userKey: row.user_key,
     threadId: row.thread_id,
     jsonrpcId: row.jsonrpc_id,
+    jsonrpcIdType: row.jsonrpc_id_type,
+    hostInstanceId: row.host_instance_id ?? undefined,
     approvalKind: row.approval_kind,
     channel: row.channel,
     expiresAt: row.expires_at,
     createdAt: row.created_at
   };
+}
+
+function pendingApprovalMismatch(
+  record: PendingApprovalRecord,
+  input: PendingApprovalRecoveryInput
+): "user" | "channel" | "thread" | "host" | undefined {
+  if (record.userKey !== input.userKey) return "user";
+  if (record.channel !== input.channel) return "channel";
+  if (input.threadId && record.threadId !== input.threadId) return "thread";
+  if (input.hostInstanceId && record.hostInstanceId !== input.hostInstanceId) return "host";
+  return undefined;
 }
 
 function taskFromRow(row: TaskRow): TaskRecord {

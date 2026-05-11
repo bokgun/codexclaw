@@ -141,6 +141,135 @@ describe("PointerStore", () => {
     expect(store.getPendingApproval("channel-msg-b")).toBeDefined();
   });
 
+  test("preserves pending approval json-rpc id type", () => {
+    const store = newStore();
+
+    store.savePendingApproval({
+      channelMsgId: "channel-msg-number",
+      userKey: "user:approval",
+      threadId: "thread-approval",
+      jsonrpcId: "42",
+      jsonrpcIdType: "number",
+      hostInstanceId: "host-number",
+      approvalKind: "command",
+      channel: "telegram",
+      expiresAt: "2026-05-01T01:00:00.000Z"
+    });
+    store.savePendingApproval({
+      channelMsgId: "channel-msg-string",
+      userKey: "user:approval",
+      threadId: "thread-approval",
+      jsonrpcId: "42",
+      jsonrpcIdType: "string",
+      approvalKind: "command",
+      channel: "telegram",
+      expiresAt: "2026-05-01T01:00:00.000Z"
+    });
+
+    expect(store.getPendingApproval("channel-msg-number")?.jsonrpcIdType).toBe("number");
+    expect(store.getPendingApproval("channel-msg-number")?.hostInstanceId).toBe("host-number");
+    expect(store.getPendingApproval("channel-msg-string")?.jsonrpcIdType).toBe("string");
+    expect(store.schemaColumns("pending_approvals")).toContain("jsonrpc_id_type");
+    expect(store.schemaColumns("pending_approvals")).toContain("host_instance_id");
+  });
+
+  test("validates pending approval recovery without consuming mismatches", () => {
+    const store = newStore();
+
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat:10",
+      userKey: "telegram:1",
+      threadId: "thread-approval",
+      jsonrpcId: "rpc-1",
+      jsonrpcIdType: "string",
+      hostInstanceId: "host-1",
+      approvalKind: "command",
+      channel: "telegram",
+      expiresAt: "2026-05-01T01:00:00.000Z"
+    });
+
+    expect(
+      store.validatePendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:2",
+        channel: "telegram",
+        now: "2026-05-01T00:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "mismatch", reason: "user" });
+    expect(
+      store.claimPendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:2",
+        channel: "telegram",
+        now: "2026-05-01T00:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "mismatch", reason: "user" });
+    expect(store.getPendingApproval("telegram:chat:10")).toBeDefined();
+
+    expect(
+      store.validatePendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:1",
+        channel: "telegram",
+        hostInstanceId: "host-2",
+        now: "2026-05-01T01:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "mismatch", reason: "host" });
+    expect(store.getPendingApproval("telegram:chat:10")).toBeDefined();
+
+    expect(
+      store.validatePendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:1",
+        channel: "telegram",
+        hostInstanceId: "host-1",
+        now: "2026-05-01T01:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "expired" });
+    expect(store.getPendingApproval("telegram:chat:10")).toBeDefined();
+  });
+
+  test("claims pending approval atomically across store connections", () => {
+    const path = tempDbPath();
+    const writer = new PointerStore(path);
+    writer.savePendingApproval({
+      channelMsgId: "telegram:chat:10",
+      userKey: "telegram:1",
+      threadId: "thread-approval",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      approvalKind: "command",
+      channel: "telegram",
+      expiresAt: "2026-05-01T01:00:00.000Z"
+    });
+
+    const first = new PointerStore(path);
+    const second = new PointerStore(path);
+
+    expect(
+      first.claimPendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:1",
+        channel: "telegram",
+        threadId: "thread-approval",
+        now: "2026-05-01T00:00:00.000Z"
+      })
+    ).toMatchObject({ kind: "claimed", record: { jsonrpcId: "7", jsonrpcIdType: "number" } });
+    expect(
+      second.claimPendingApproval({
+        channelMsgId: "telegram:chat:10",
+        userKey: "telegram:1",
+        channel: "telegram",
+        threadId: "thread-approval",
+        now: "2026-05-01T00:00:00.000Z"
+      })
+    ).toEqual({ kind: "missing" });
+
+    writer.close();
+    first.close();
+    second.close();
+  });
+
   test("stores branch suggestion lifecycle metadata without message bodies", () => {
     const store = newStore();
 

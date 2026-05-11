@@ -119,6 +119,15 @@ export class HostRuntime {
     });
     this.approvals = new ApprovalBridge(this.store, this.codex, this.channel, this.router, this.logger, undefined, undefined, {
       getThreadTarget: (threadId) => this.threadTargets.get(threadId),
+      bindThreadTarget: (threadId, target) => {
+        const bound = {
+          userKey: target.userKey,
+          channel: this.channel.name,
+          channelThreadKey: target.channelThreadKey
+        };
+        this.threadTargets.set(threadId, bound);
+        dispatcher.bindThread(threadId, bound);
+      },
       modifyTtlMs: this.approvalModifyTtlMs
     });
     this.branchSuggestions =

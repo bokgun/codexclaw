@@ -32,7 +32,9 @@ smoke-test checklist.
 - No conversation bodies, Telegram message text, tool calls, diffs, callback
   payload histories, or approval histories are persisted.
 - Branch suggestion held messages are in memory only and are cleared by TTL.
-- Telegram update offsets and callback correlation maps are in memory only.
+- Telegram update offsets and live callback correlation maps are in memory
+  only. Restart recovery for approval callbacks uses only pending approval
+  pointer metadata and the Telegram prompt message id.
 
 ## Telegram Identity And Routing
 
@@ -59,6 +61,16 @@ smoke-test checklist.
   message and are not routed as normal messages.
 - Disconnect invalidation tombstones and notifies active approvals and pending
   Modify waits.
+- Approval callback memory misses recover only when the pending row was created
+  by the current host process, the stored host instance id matches, the callback
+  user/chat match, and no live JSON-RPC request id conflict is present. Cold
+  Telegram runtime restarts and rows from another host process fail closed until
+  app-server continuity can be proven. Expired recovered callbacks can only send
+  a safe decline.
+- Recovered approval callback handling validates before consuming the stored
+  row, then atomically claims it before sending any Codex approval response.
+- Recovered Modify rejects the original approval and asks for a fresh
+  instruction; it does not reconstruct the in-memory Modify context.
 
 ## Branch Suggestion Flow
 
@@ -87,8 +99,9 @@ smoke-test checklist.
 - Logs and thrown errors redact Telegram bot tokens.
 - AGENTS.md is not directly edited through channel commands.
 - Remote Telegram users cannot terminate the host process.
-- Stale callbacks after restart answer as expired or unknown and do not route
-  approvals or user text.
+- Stale or unrecoverable callbacks after restart answer safely and do not route
+  user text. Recoverable callbacks send only the stored approval response, not
+  any persisted prompt or command content.
 
 ## Documentation
 
@@ -97,4 +110,5 @@ smoke-test checklist.
 - `docs/M2-manual-checklist.md` covers human smoke testing in a real Telegram
   private chat.
 - The M2 plan remains consistent with implementation behavior, especially
-  long-polling limitations and in-memory correlation state.
+  long-polling limitations, in-memory live correlation state, and the bounded
+  approval callback memory-miss recovery behavior.

@@ -231,6 +231,15 @@ Optional Telegram environment:
 M2 Telegram supports private chats only. Webhook signing and rate-limit
 hardening are out of scope for the long-polling path; callback data carries only
 opaque adapter keys and action names.
+Approval callback memory-miss handling uses only the stored pending approval
+mapping and Telegram prompt message id; it does not store prompt text, command
+payloads, diffs, callback payload history, or approval decisions. Because the
+pinned app-server protocol does not expose a server generation id, cold
+`bun run telegram` restarts and rows from another host process fail closed until
+a continuity proof is added. Expired recovered callbacks can only recover to a
+safe decline, and recovered `Modify` rejects the original approval and asks for
+a fresh instruction because the original Modify context is intentionally
+in-memory only.
 
 ## Discord Runtime
 

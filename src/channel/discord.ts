@@ -832,7 +832,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
   }
 
   private isExpired(expiresAt: string): boolean {
-    return this.now().toISOString() > expiresAt;
+    return this.now().toISOString() >= expiresAt;
   }
 
   private clearBranchSuggestion(key: string, pending: PendingBranchSuggestion): void {

@@ -94,6 +94,10 @@ export interface ChannelApprovalResponse {
   modifyText?: string;
   receivedAt: TimestampIso;
   channelThreadKey?: string;
+  recovery?: {
+    channel: ChannelKind;
+    channelMessageId: ChannelMessageId;
+  };
 }
 
 export type BranchSuggestionDecision = "new_thread" | "continue";

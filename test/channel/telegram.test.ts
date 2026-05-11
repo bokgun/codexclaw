@@ -11,6 +11,7 @@ import {
   type TelegramUpdate
 } from "../../src/channel/telegram.js";
 import type { TelegramConfig } from "../../src/config/env.js";
+import type { LogFields, RuntimeLogger } from "../../src/runtime/log.js";
 
 describe("TelegramChannelAdapter", () => {
   test("normalizes allowed private text messages into channel-neutral messages", async () => {
@@ -176,6 +177,116 @@ describe("TelegramChannelAdapter", () => {
 
     expect(routed).toBe("none");
     expect(api.answers).toEqual([{ callback_query_id: "callback-2", text: "Approval expired." }]);
+    await adapter.close();
+  });
+
+  test("rejects approval callbacks exactly at expiry at the Telegram boundary", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.requestApproval({
+      approvalId: "approval-1",
+      userKey: "telegram:42",
+      threadId: "thread-1",
+      prompt: "Run command?",
+      options: ["approve", "reject", "modify"],
+      expiresAt: "2026-05-01T00:00:00.000Z",
+      channelThreadKey: "telegram:42"
+    });
+    await adapter.processUpdate(callbackUpdate({ updateId: 2, userId: 42, chatId: 42, messageId: 1, data: "cc:a:k1:approve" }));
+    const routed = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.answers).toEqual([{ callback_query_id: "callback-2", text: "Approval expired." }]);
+    await adapter.close();
+  });
+
+  test("emits recovery-capable approval responses on approval callback memory miss", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.processUpdate(callbackUpdate({ updateId: 2, userId: 42, chatId: 42, messageId: 9, data: "cc:a:old-key:approve" }));
+    const approval = await approvals.next();
+
+    expect(approval.value).toMatchObject({
+      approvalId: "old-key",
+      channelMessageId: "telegram:42:9",
+      userKey: "telegram:42",
+      decision: "approve",
+      channelThreadKey: "telegram:42",
+      recovery: {
+        channel: "telegram",
+        channelMessageId: "telegram:42:9"
+      }
+    });
+    expect(api.answers).toEqual([{ callback_query_id: "callback-2", text: "Approval response received." }]);
+    await adapter.close();
+  });
+
+  test("maps recovered modify callbacks to a recovery response without collecting prompt text", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.processUpdate(callbackUpdate({ updateId: 2, userId: 42, chatId: 42, messageId: 9, data: "cc:a:old-key:modify" }));
+    const approval = await approvals.next();
+
+    expect(approval.value).toMatchObject({
+      approvalId: "old-key",
+      channelMessageId: "telegram:42:9",
+      userKey: "telegram:42",
+      decision: "modify",
+      channelThreadKey: "telegram:42",
+      recovery: {
+        channel: "telegram",
+        channelMessageId: "telegram:42:9"
+      }
+    });
+    expect(approval.value.modifyText).toBeUndefined();
+    expect(api.answers).toEqual([
+      {
+        callback_query_id: "callback-2",
+        text: "Modify is unavailable after restart. The approval will be rejected; send a fresh instruction."
+      }
+    ]);
+    await adapter.close();
+  });
+
+  test("fails closed before recovery for unauthorized or shared-chat approval callbacks", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.processUpdate(callbackUpdate({ updateId: 2, userId: 43, chatId: 43, messageId: 9, data: "cc:a:old-key:approve" }));
+    await adapter.processUpdate(
+      callbackUpdate({ updateId: 3, userId: 42, chatId: -100, messageId: 9, data: "cc:a:old-key:approve", chatType: "supergroup" })
+    );
+    const routed = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.answers).toEqual([
+      { callback_query_id: "callback-2", text: "This Telegram user is not allowed.", show_alert: true },
+      { callback_query_id: "callback-3", text: "Private chats only.", show_alert: true }
+    ]);
+    await adapter.close();
+  });
+
+  test("fails closed before recovery for malformed or message-less callbacks", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const approvals = adapter.approvalResponses[Symbol.asyncIterator]();
+
+    await adapter.processUpdate(callbackUpdate({ updateId: 2, userId: 42, chatId: 42, messageId: 9, data: "bad:data" }));
+    await adapter.processUpdate(callbackUpdateWithoutMessage({ updateId: 3, userId: 42, data: "cc:a:old-key:approve" }));
+    const routed = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.answers).toEqual([
+      { callback_query_id: "callback-2", text: "Unknown or expired action." },
+      { callback_query_id: "callback-3", text: "Unknown or expired action." }
+    ]);
     await adapter.close();
   });
 
@@ -404,6 +515,37 @@ describe("TelegramChannelAdapter", () => {
     await expect(client.getUpdates({ timeout: 1, allowed_updates: [] })).rejects.toThrow("[telegram-bot-token]");
     await expect(client.getUpdates({ timeout: 1, allowed_updates: [] })).rejects.not.toThrow("123:secret");
   });
+
+  test("logs and stops on duplicate long-polling Telegram conflicts", async () => {
+    const api = new ConflictTelegramApi();
+    const logger = new MemoryLogger();
+    const adapter = new TelegramChannelAdapter({
+      config: telegramConfig(),
+      apiClient: api,
+      logger,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+      keyFactory: () => "k1",
+      startPolling: true
+    });
+    const messages = adapter.receive[Symbol.asyncIterator]();
+
+    await delay(20);
+    const closed = await Promise.race([messages.next(), delay(10).then(() => "open" as const)]);
+    await adapter.close();
+
+    expect(api.getUpdatesCalls).toBe(1);
+    expect(closed).toEqual({ done: true, value: undefined });
+    expect(logger.errors).toEqual([
+      {
+        event: "telegram_polling_conflict",
+        fields: {
+          error: "Telegram getUpdates failed: Conflict: terminated by other getUpdates request",
+          action: "stopped"
+        }
+      }
+    ]);
+    expect(logger.warns).toEqual([]);
+  });
 });
 
 function adapterWith(api: FakeTelegramApi, overrides: Partial<TelegramConfig> = {}, key = "k1"): TelegramChannelAdapter {
@@ -475,6 +617,38 @@ class FakeTelegramApi implements TelegramApiClient {
   }
 }
 
+class ConflictTelegramApi extends FakeTelegramApi {
+  getUpdatesCalls = 0;
+
+  override async getUpdates(_params: TelegramGetUpdatesParams): Promise<readonly TelegramUpdate[]> {
+    this.getUpdatesCalls += 1;
+    throw new Error("Telegram getUpdates failed: Conflict: terminated by other getUpdates request");
+  }
+}
+
+class MemoryLogger implements RuntimeLogger {
+  readonly debugs: Array<{ event: string; fields?: LogFields }> = [];
+  readonly infos: Array<{ event: string; fields?: LogFields }> = [];
+  readonly warns: Array<{ event: string; fields?: LogFields }> = [];
+  readonly errors: Array<{ event: string; fields?: LogFields }> = [];
+
+  debug(event: string, fields?: LogFields): void {
+    this.debugs.push({ event, fields });
+  }
+
+  info(event: string, fields?: LogFields): void {
+    this.infos.push({ event, fields });
+  }
+
+  warn(event: string, fields?: LogFields): void {
+    this.warns.push({ event, fields });
+  }
+
+  error(event: string, fields?: LogFields): void {
+    this.errors.push({ event, fields });
+  }
+}
+
 function textUpdate(options: {
   updateId: number;
   userId: number;
@@ -508,6 +682,7 @@ function callbackUpdate(options: {
   chatId: number;
   messageId: number;
   data: string;
+  chatType?: "private" | "group" | "supergroup" | "channel";
 }): TelegramUpdate {
   return {
     update_id: options.updateId,
@@ -517,8 +692,19 @@ function callbackUpdate(options: {
       data: options.data,
       message: {
         message_id: options.messageId,
-        chat: { id: options.chatId, type: "private" }
+        chat: { id: options.chatId, type: options.chatType ?? "private" }
       }
+    }
+  };
+}
+
+function callbackUpdateWithoutMessage(options: { updateId: number; userId: number; data: string }): TelegramUpdate {
+  return {
+    update_id: options.updateId,
+    callback_query: {
+      id: `callback-${options.updateId}`,
+      from: { id: options.userId },
+      data: options.data
     }
   };
 }

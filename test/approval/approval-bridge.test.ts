@@ -199,7 +199,7 @@ describe("ApprovalBridge", () => {
     expect(channel.requests[0]!.channelThreadKey).toBe("telegram:chat-a");
 
     await bridge.handleChannelResponse(
-      response(approvalId, "approve", undefined, `prompt:${approvalId}`, "telegram:chat-b")
+      response(approvalId, "approve", undefined, `prompt:${approvalId}`, "telegram:43")
     );
 
     expect(codex.responses).toEqual([]);
@@ -259,6 +259,27 @@ describe("ApprovalBridge", () => {
       { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
     ]);
     expect(router.followUps).toEqual([]);
+    store.close();
+  });
+
+  test("approval callback exactly at expiry sends safe decline", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    let now = new Date("2026-05-01T00:00:00.000Z");
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, 1000, () => now);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    now = new Date("2026-05-01T00:00:01.000Z");
+    await bridge.handleChannelResponse(response(approvalId, "approve", undefined, `prompt:${approvalId}`));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 1, accepted: false }
+    ]);
+    expect(store.getPendingApproval(`prompt:${approvalId}`)).toBeUndefined();
     store.close();
   });
 
@@ -343,6 +364,339 @@ describe("ApprovalBridge", () => {
     store.close();
   });
 
+  test("recovers approval response from store after memory miss preserving numeric request id", async () => {
+    const hostInstanceId = "host-recovered-number";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    let rebound: { threadId: string; userKey: string; channelThreadKey?: string } | undefined;
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, () => new Date("2026-05-01T00:01:00.000Z"), {
+      hostInstanceId,
+      bindThreadTarget: (threadId, target) => {
+        rebound = { threadId, ...target };
+      }
+    });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:100",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2028-05-01T00:05:00.000Z"
+    });
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:chat-a:100", "telegram:chat-a"));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 7, accepted: true }
+    ]);
+    expect(rebound).toEqual({ threadId: "thread-1", userKey: "user:1", channelThreadKey: "telegram:chat-a" });
+    expect(store.getPendingApproval("telegram:chat-a:100")).toBeUndefined();
+    store.close();
+  });
+
+  test("recovers rejection from store preserving string request id", async () => {
+    const hostInstanceId = "host-recovered-string";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(
+      store,
+      codex as never,
+      channel,
+      router as never,
+      noopLogger,
+      undefined,
+      () => new Date("2026-05-01T00:01:00.000Z"),
+      { hostInstanceId }
+    );
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:101",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "string",
+      hostInstanceId,
+      approvalKind: "item/fileChange/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+
+    await bridge.handleChannelResponse(response("missing-memory", "reject", undefined, "telegram:chat-a:101", "telegram:chat-a"));
+
+    expect(codex.responses).toEqual([{ method: "item/fileChange/requestApproval", requestId: "7", accepted: false }]);
+    expect(store.getPendingApproval("telegram:chat-a:101")).toBeUndefined();
+    store.close();
+  });
+
+  test("live approval callbacks require the same single-use store claim", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel();
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    await bridge.handleRuntimeEvent(approvalEvent(1, "thread-1"));
+    const approvalId = channel.requests[0]!.approvalId;
+    expect(store.deletePendingApproval(`prompt:${approvalId}`)).toBe(true);
+
+    await bridge.handleChannelResponse(response(approvalId, "approve", undefined, `prompt:${approvalId}`));
+
+    expect(codex.responses).toEqual([]);
+    store.close();
+  });
+
+  test("does not consume recovered approval on wrong user or missing thread", async () => {
+    const hostInstanceId = "host-missing-thread";
+    const store = createPointerStore();
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:102",
+      userKey: "user:1",
+      threadId: "thread-missing",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, undefined, {
+      hostInstanceId
+    });
+
+    await bridge.handleChannelResponse({
+      ...response("missing-memory", "approve", undefined, "telegram:chat-a:102", "telegram:chat-a"),
+      userKey: "user:2"
+    });
+    expect(store.getPendingApproval("telegram:chat-a:102")).toBeDefined();
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:chat-a:102", "telegram:chat-a"));
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:chat-a:102")).toBeDefined();
+    store.close();
+  });
+
+  test("does not consume recovered approval on malformed stored metadata", async () => {
+    const hostInstanceId = "host-malformed";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:106",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "not-a-number",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:107",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/unknown/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, undefined, {
+      hostInstanceId
+    });
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:chat-a:106", "telegram:chat-a"));
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:chat-a:107", "telegram:chat-a"));
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:chat-a:106")).toBeDefined();
+    expect(store.getPendingApproval("telegram:chat-a:107")).toBeDefined();
+    store.close();
+  });
+
+  test("does not consume recovered approval when callback chat mismatches stored prompt id", async () => {
+    const hostInstanceId = "host-chat-mismatch";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    store.savePendingApproval({
+      channelMsgId: "telegram:42:108",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, undefined, {
+      hostInstanceId
+    });
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:42:108", "telegram:43"));
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:42:108")).toBeDefined();
+    store.close();
+  });
+
+  test("does not recover stored approval when current websocket has reused request id", async () => {
+    const hostInstanceId = "host-reused-id";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    store.savePendingApproval({
+      channelMsgId: "telegram:42:109",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, undefined, {
+      hostInstanceId
+    });
+
+    await bridge.handleRuntimeEvent(approvalEvent(7, "thread-1"));
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:42:109", "telegram:42"));
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:42:109")).toBeDefined();
+    store.close();
+  });
+
+  test("recovered expired and modify callbacks decline safely without follow-up", async () => {
+    const hostInstanceId = "host-expired-modify";
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    let now = new Date("2026-05-01T00:01:00.000Z");
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger, undefined, () => now, {
+      hostInstanceId
+    });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:103",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "8",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:00:00.000Z"
+    });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:104",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "9",
+      jsonrpcIdType: "number",
+      hostInstanceId,
+      approvalKind: "item/fileChange/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:chat-a:103", "telegram:chat-a"));
+    now = new Date("2026-05-01T00:02:00.000Z");
+    await bridge.handleChannelResponse(response("missing-memory", "modify", undefined, "telegram:chat-a:104", "telegram:chat-a"));
+
+    expect(codex.responses).toEqual([
+      { method: "item/commandExecution/requestApproval", requestId: 8, accepted: false },
+      { method: "item/fileChange/requestApproval", requestId: 9, accepted: false }
+    ]);
+    expect(router.followUps).toEqual([]);
+    expect(channel.messages[0]?.text).toContain("expired");
+    expect(channel.messages[1]?.text).toContain("Modify is unavailable after restart");
+    expect(store.getPendingApproval("telegram:chat-a:103")).toBeUndefined();
+    expect(store.getPendingApproval("telegram:chat-a:104")).toBeUndefined();
+    store.close();
+  });
+
+  test("fresh bridge expiry leaves persisted approvals for recovered safe decline", () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    store.savePendingApproval({
+      channelMsgId: "telegram:chat-a:105",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "10",
+      jsonrpcIdType: "number",
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:00:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(store, codex as never, channel, router as never, noopLogger);
+
+    bridge.expirePending("2026-05-01T00:01:00.000Z");
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:chat-a:105")).toBeDefined();
+    store.close();
+  });
+
+  test("fresh bridge does not recover approvals from another host instance", async () => {
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
+    store.savePendingApproval({
+      channelMsgId: "telegram:42:110",
+      userKey: "user:1",
+      threadId: "thread-1",
+      jsonrpcId: "7",
+      jsonrpcIdType: "number",
+      approvalKind: "item/commandExecution/requestApproval",
+      channel: "telegram",
+      expiresAt: "2026-05-01T00:05:00.000Z"
+    });
+    const codex = new MockApprovalCodex();
+    const channel = new MockChannel("telegram");
+    const router = new MockRouter();
+    const bridge = new ApprovalBridge(
+      store,
+      codex as never,
+      channel,
+      router as never,
+      noopLogger,
+      undefined,
+      () => new Date("2027-05-02T00:00:00.000Z")
+    );
+
+    await bridge.handleChannelResponse(response("missing-memory", "approve", undefined, "telegram:42:110", "telegram:42"));
+
+    expect(codex.responses).toEqual([]);
+    expect(store.getPendingApproval("telegram:42:110")).toBeDefined();
+    store.close();
+  });
+
   test("invalidates active and queued approvals on disconnect", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-1", makeActive: true });
@@ -406,7 +760,6 @@ class MockApprovalCodex {
 }
 
 class MockChannel implements ChannelAdapter {
-  readonly name = "cli" as const;
   readonly receive = empty<never>();
   readonly approvalResponses = empty<ChannelApprovalResponse>();
   requests: ChannelApprovalRequest[] = [];
@@ -414,6 +767,8 @@ class MockChannel implements ChannelAdapter {
   failSend = false;
   failNextApprovalPrompt = false;
   blockNextApprovalPrompt?: () => Promise<void>;
+
+  constructor(readonly name: ChannelAdapter["name"] = "cli") {}
 
   async send(_message: OutboundMessage): Promise<{}> {
     if (this.failSend) throw new Error("send failed");

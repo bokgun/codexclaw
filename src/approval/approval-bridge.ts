@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { routeApprovalDecision } from "../channel/approval.js";
 import type { ChannelAdapter, ChannelApprovalResponse } from "../channel/types.js";
-import type { CodexRuntimeClient } from "../codex/runtime-client.js";
+import { isObservedApprovalMethod, type CodexRuntimeClient } from "../codex/runtime-client.js";
 import type { JsonObject, JsonValue } from "../codex/ws-client.js";
 import type { RuntimeLogger } from "../runtime/log.js";
 import type { Router } from "../runtime/router.js";
@@ -40,6 +40,8 @@ interface ModifyWait {
 export interface ApprovalBridgeOptions {
   modifyTtlMs?: number;
   getThreadTarget?: (threadId: string) => ThreadChannelTarget | undefined;
+  bindThreadTarget?: (threadId: string, target: ThreadChannelTarget) => void;
+  hostInstanceId?: string;
 }
 
 export class ApprovalBridge {
@@ -49,6 +51,7 @@ export class ApprovalBridge {
   private readonly tombstones = new Map<string, { userKey: string; reason: string }>();
   private readonly modifyWaits = new Map<string, ModifyWait>();
   private readonly modifyTtlMs: number;
+  private readonly hostInstanceId: string;
 
   constructor(
     private readonly store: PointerStore,
@@ -61,6 +64,7 @@ export class ApprovalBridge {
     private readonly options: ApprovalBridgeOptions = {}
   ) {
     this.modifyTtlMs = options.modifyTtlMs ?? 10 * 60 * 1000;
+    this.hostInstanceId = options.hostInstanceId ?? randomUUID();
   }
 
   async handleRuntimeEvent(event: RuntimeEvent): Promise<boolean> {
@@ -132,6 +136,7 @@ export class ApprovalBridge {
         return;
       }
       this.logger.warn("approval_response_unmatched", { approvalId: response.approvalId });
+      await this.handleRecoveredChannelResponse(response);
       return;
     }
     if (!pending.channelMessageId || !pending.expiresAt) {
@@ -146,15 +151,17 @@ export class ApprovalBridge {
       this.logger.warn("approval_response_rejected", { approvalId: response.approvalId, reason: "correlation_mismatch" });
       return;
     }
-    if (this.now().toISOString() > pending.expiresAt) {
-      this.resolvePending(pending, false, "approval_expired", { safe: true });
+    if (this.now().toISOString() >= pending.expiresAt) {
+      if (!this.claimLivePending(pending, this.now().toISOString(), true)) return;
+      this.resolvePending(pending, false, "approval_expired", { safe: true, alreadyClaimed: true });
       this.notifyApprovalStatus(pending, "expired and was rejected");
       await this.promoteNext(pending.thread.threadId);
       return;
     }
 
     if (response.decision === "modify" && !response.modifyText) {
-      this.resolvePending(pending, false, "approval_modify_waiting");
+      if (!this.claimLivePending(pending, this.now().toISOString())) return;
+      this.resolvePending(pending, false, "approval_modify_waiting", { alreadyClaimed: true });
       this.modifyWaits.set(pending.approvalId, {
         approvalId: pending.approvalId,
         thread: pending.thread,
@@ -169,7 +176,8 @@ export class ApprovalBridge {
     }
 
     const routed = routeApprovalDecision(response);
-    this.resolvePending(pending, routed.codexDecision === "accept", "approval_resolved");
+    if (!this.claimLivePending(pending, this.now().toISOString())) return;
+    this.resolvePending(pending, routed.codexDecision === "accept", "approval_resolved", { alreadyClaimed: true });
 
     if (routed.followUpText) {
       void this.enqueueModifyFollowUp(pending.thread, buildModifyFollowUp(pending.context, routed.followUpText), {
@@ -192,10 +200,10 @@ export class ApprovalBridge {
   }
 
   expirePending(now = this.now().toISOString()): void {
-    for (const record of this.store.expirePendingApprovals(now)) {
-      const pending = [...this.pending.values()].find((item) => item.channelMessageId === record.channelMsgId);
-      if (!pending) continue;
-      this.resolvePending(pending, false, "approval_expired", { safe: true });
+    for (const pending of [...this.pending.values()]) {
+      if (!pending.channelMessageId || !pending.expiresAt || pending.expiresAt > now) continue;
+      if (!this.claimLivePending(pending, now, true)) continue;
+      this.resolvePending(pending, false, "approval_expired", { safe: true, alreadyClaimed: true });
       this.notifyApprovalStatus(pending, "expired and was rejected");
       void this.promoteNext(pending.thread.threadId);
     }
@@ -269,6 +277,8 @@ export class ApprovalBridge {
       userKey: pending.userKey,
       threadId: pending.thread.threadId,
       jsonrpcId: String(pending.requestId),
+      jsonrpcIdType: typeof pending.requestId === "number" ? "number" : "string",
+      hostInstanceId: this.hostInstanceId,
       approvalKind: pending.method,
       channel: this.channel.name,
       expiresAt
@@ -285,7 +295,7 @@ export class ApprovalBridge {
     pending: PendingRuntimeApproval,
     accepted: boolean,
     event: string,
-    options: { safe?: boolean } = {}
+    options: { safe?: boolean; alreadyClaimed?: boolean } = {}
   ): void {
     if (options.safe) {
       this.trySendApprovalResponse(pending, accepted, event);
@@ -294,7 +304,7 @@ export class ApprovalBridge {
     }
     this.pending.delete(pending.approvalId);
     this.tombstones.set(pending.approvalId, { userKey: pending.userKey, reason: event });
-    if (pending.channelMessageId) this.store.deletePendingApproval(pending.channelMessageId);
+    if (pending.channelMessageId && !options.alreadyClaimed) this.store.deletePendingApproval(pending.channelMessageId);
     if (this.activeByThread.get(pending.thread.threadId) === pending.approvalId) {
       this.activeByThread.delete(pending.thread.threadId);
     }
@@ -323,6 +333,170 @@ export class ApprovalBridge {
     }
   }
 
+  private async handleRecoveredChannelResponse(response: ChannelApprovalResponse): Promise<void> {
+    const validation = this.store.validatePendingApproval({
+      channelMsgId: response.channelMessageId,
+      userKey: response.userKey,
+      channel: this.channel.name,
+      hostInstanceId: this.hostInstanceId,
+      now: this.now().toISOString()
+    });
+
+    if (validation.kind === "missing") {
+      this.logger.warn("approval_recovery_missing", { channelMessageId: response.channelMessageId });
+      return;
+    }
+    if (validation.kind === "mismatch") {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: validation.reason
+      });
+      return;
+    }
+    const thread = this.findThread(validation.record.threadId);
+    if (!thread) {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: "thread"
+      });
+      return;
+    }
+
+    const requestId = parseRecoveredRequestId(validation.record.jsonrpcId, validation.record.jsonrpcIdType);
+    if (requestId === undefined || !isObservedApprovalMethod(validation.record.approvalKind)) {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: requestId === undefined ? "jsonrpc_id" : "approval_kind"
+      });
+      return;
+    }
+    if (this.hasConflictingLiveRequest(validation.record.approvalKind, requestId, validation.record.channelMsgId)) {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: "live_request_conflict"
+      });
+      return;
+    }
+
+    const derivedChannelThreadKey = deriveChannelThreadKey(validation.record.channel, validation.record.channelMsgId);
+    if (derivedChannelThreadKey && response.channelThreadKey && response.channelThreadKey !== derivedChannelThreadKey) {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: "channel_thread"
+      });
+      return;
+    }
+
+    const claim = this.store.claimPendingApproval({
+      channelMsgId: response.channelMessageId,
+      userKey: response.userKey,
+      channel: this.channel.name,
+      threadId: thread.threadId,
+      hostInstanceId: this.hostInstanceId,
+      now: this.now().toISOString()
+    });
+    if (claim.kind === "missing") {
+      this.logger.warn("approval_recovery_missing", { channelMessageId: response.channelMessageId, claimed: false });
+      return;
+    }
+    if (claim.kind === "mismatch") {
+      this.logger.warn("approval_recovery_rejected", {
+        channelMessageId: response.channelMessageId,
+        reason: claim.reason,
+        claimed: false
+      });
+      return;
+    }
+
+    const channelThreadKey = derivedChannelThreadKey ?? response.channelThreadKey;
+    if (channelThreadKey) {
+      this.options.bindThreadTarget?.(thread.threadId, {
+        userKey: response.userKey,
+        channelThreadKey
+      });
+    }
+
+    const accepted = response.decision === "approve" && claim.kind === "claimed";
+    this.trySendRecoveredApprovalResponse(claim.record.approvalKind, requestId, accepted, response.channelMessageId);
+
+    if (claim.kind === "expired") {
+      await this.channel.send({
+        channel: this.channel.name,
+        userKey: response.userKey,
+        text: `Approval ${response.approvalId} expired and was rejected.`,
+        channelThreadKey,
+        replyToMessageId: response.channelMessageId,
+        attachments: [{ kind: "status", status: "expired" }]
+      });
+      return;
+    }
+
+    if (response.decision === "modify") {
+      await this.channel.send({
+        channel: this.channel.name,
+        userKey: response.userKey,
+        text: "Modify is unavailable after restart. The original approval was rejected; send a fresh instruction instead.",
+        channelThreadKey,
+        replyToMessageId: response.channelMessageId,
+        attachments: [{ kind: "status", status: "modify_unavailable" }]
+      });
+    }
+
+    this.logger.info("approval_recovered", {
+      threadId: thread.threadId,
+      method: claim.record.approvalKind,
+      decision: response.decision
+    });
+  }
+
+  private claimLivePending(pending: PendingRuntimeApproval, now: string, allowExpired = false): boolean {
+    if (!pending.channelMessageId) return false;
+    const claim = this.store.claimPendingApproval({
+      channelMsgId: pending.channelMessageId,
+      userKey: pending.userKey,
+      channel: this.channel.name,
+      threadId: pending.thread.threadId,
+      hostInstanceId: this.hostInstanceId,
+      now
+    });
+    if (claim.kind === "claimed") return true;
+    if (claim.kind === "expired" && allowExpired) return true;
+    this.logger.warn("approval_response_rejected", {
+      approvalId: pending.approvalId,
+      reason: claim.kind === "mismatch" ? `claim_${claim.reason}` : `claim_${claim.kind}`
+    });
+    this.pending.delete(pending.approvalId);
+    if (this.activeByThread.get(pending.thread.threadId) === pending.approvalId) {
+      this.activeByThread.delete(pending.thread.threadId);
+    }
+    void this.promoteNext(pending.thread.threadId);
+    return false;
+  }
+
+  private trySendRecoveredApprovalResponse(
+    method: string,
+    requestId: number | string,
+    accepted: boolean,
+    channelMessageId: string
+  ): void {
+    try {
+      this.codex.sendApprovalResponse(method, requestId, accepted);
+    } catch (error) {
+      this.logger.warn("approval_recovery_send_failed", {
+        channelMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private hasConflictingLiveRequest(method: string, requestId: number | string, channelMessageId: string): boolean {
+    for (const pending of this.pending.values()) {
+      if (pending.method !== method || pending.requestId !== requestId) continue;
+      return pending.channelMessageId !== channelMessageId;
+    }
+    return false;
+  }
+
   private notifyApprovalStatus(pending: PendingRuntimeApproval, status: string): void {
     if (!pending.channelMessageId) return;
     void this.channel.send({
@@ -346,7 +520,7 @@ export class ApprovalBridge {
       this.logger.warn("approval_modify_rejected", { approvalId, reason: "correlation_mismatch" });
       return true;
     }
-    if (this.now().toISOString() > wait.expiresAt) {
+    if (this.now().toISOString() >= wait.expiresAt) {
       this.modifyWaits.delete(approvalId);
       this.tombstones.set(approvalId, { userKey: wait.userKey, reason: "modify_expired" });
       this.notifyModifyStatus(wait, "Modify expired. The original approval was already rejected.");
@@ -477,4 +651,16 @@ function readString(object: JsonObject, key: string): string | undefined {
 
 function buildModifyFollowUp(context: string, modifyText: string): string {
   return `The previous approval was rejected so this modified instruction can be applied instead.\n\nOriginal request summary:\n${context}\n\nModified instruction:\n${modifyText}`;
+}
+
+function parseRecoveredRequestId(value: string, type: "number" | "string"): number | string | undefined {
+  if (type === "string") return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function deriveChannelThreadKey(channel: string, channelMessageId: string): string | undefined {
+  if (channel !== "telegram") return undefined;
+  const match = /^telegram:(-?\d+):\d+$/.exec(channelMessageId);
+  return match ? `telegram:${match[1]}` : undefined;
 }

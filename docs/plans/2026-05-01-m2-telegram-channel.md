@@ -51,7 +51,10 @@ tool, diff, approval, or rollout storage.
 - Shared Telegram group thread semantics.
 - Telegram file uploads, images, voice, stickers, or rich attachments.
 - Storing Telegram conversation bodies beyond short-lived in-memory
-  approval/modify/suggestion correlation state.
+  approval/modify/suggestion correlation state. Follow-up approval callback
+  recovery may persist only pointer metadata already allowed for
+  `pending_approvals`; see
+  `docs/plans/2026-05-12-telegram-approval-callback-recovery.md`.
 - Editing AGENTS.md directly through Telegram.
 - Replacing M1 approval, routing, thread, reconnect, or pointer-store behavior.
 - Webhook deployment hardening. M2 starts with long polling for the personal
@@ -123,8 +126,10 @@ tool, diff, approval, or rollout storage.
    - On process restart, accept that Telegram may replay the last unconfirmed
      update. Document this residual M2 limitation and keep persistent
      exactly-once delivery as a PRD/M4 hardening decision.
-   - Stale callback queries after restart must answer with a clear expired/unknown
-     message and must not route user text or approvals.
+   - Stale callback queries after restart must fail closed and must not route
+     user text. Follow-up approval callback recovery can send a pending approval
+     response only when the app-server still holds the request and the persisted
+     pending approval mapping validates.
 
 6. Approval target binding in M1 core
    - Dependencies: existing `HostRuntime`, `EventDispatcher`, and
@@ -505,9 +510,9 @@ on approval prompt:
   Modify reply before the 10-minute timeout still enqueues the follow-up turn.
 - Modify timeout clears preserved context, and stale replies are ignored.
 - 4-hour branch suggestion follows PRD daily throttle and 7-day suppression.
-- Long-polling duplicate handling is explicit: in-process duplicates are ignored,
-  stale post-restart callbacks are rejected, and restart replay risk is
-  documented without storing message bodies.
+- Long-polling duplicate handling is explicit: in-process duplicates are
+  ignored, stale post-restart callbacks fail closed, and the later bounded
+  approval callback recovery behavior is documented in the follow-up plan.
 - Telegram runtime uses M1 core for routing, approvals, reconnect, and store
   persistence.
 - `bun run typecheck`, `bun test`, and `bun run schema:verify` pass.
