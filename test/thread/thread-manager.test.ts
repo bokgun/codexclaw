@@ -30,6 +30,20 @@ describe("ThreadManager", () => {
     store.close();
   });
 
+  test("does not resume newly started threads before their first routed turn", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    codex.failResumeOnly = true;
+    const manager = new ThreadManager(store, codex as never, { workspaceRoot: process.cwd() });
+
+    const pointer = await manager.createThread("user:1", "ops");
+    await expect(manager.resumeThread(pointer)).resolves.toBeUndefined();
+
+    expect(codex.resumedThreads).toEqual([]);
+    expect(store.getThread("user:1", "ops")?.status).toBe("active");
+    store.close();
+  });
+
   test("refuses to archive the only active label when default is unavailable", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-default", status: "archived" });
@@ -63,7 +77,15 @@ class MockCodex {
   failResumeOnly = false;
   archiveEnabled = true;
   archivedThreads: string[] = [];
+  startedThreads: string[] = [];
+  resumedThreads: string[] = [];
   workspaceRoot = process.cwd();
+
+  async startThread(): Promise<string> {
+    const id = `thread-${this.startedThreads.length + 1}`;
+    this.startedThreads.push(id);
+    return id;
+  }
 
   async readThread(): Promise<{}> {
     if (this.failResume) throw new Error("missing");
@@ -81,7 +103,8 @@ class MockCodex {
     return { data: [{ id: "thread-1", cwd: this.workspaceRoot, status: { type: "idle" }, turns: [] }], nextCursor: null };
   }
 
-  async resumeThread(): Promise<{}> {
+  async resumeThread(threadId: string): Promise<{}> {
+    this.resumedThreads.push(threadId);
     if (this.failResume) throw new Error("missing");
     if (this.failResumeOnly) throw new Error('{"code":-32600,"message":"no rollout found for thread id thread-1"}');
     return {};

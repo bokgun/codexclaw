@@ -48,7 +48,7 @@ describe("HostRuntime", () => {
       "thread/list",
       "thread/start"
     ]);
-    expect(methods.slice(6, turnStartIndex)).toEqual(["thread/read", "thread/list", "thread/list", "thread/resume"]);
+    expect(methods.slice(6, turnStartIndex)).toEqual(["thread/read", "thread/list", "thread/list"]);
   });
 });
 

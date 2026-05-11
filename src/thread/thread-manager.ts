@@ -6,6 +6,8 @@ import type { ThreadLabel, ThreadRecord, UserKey } from "../runtime/types.js";
 import type { PointerStore } from "../store/pointer-store.js";
 
 export class ThreadManager {
+  private readonly newlyStartedThreadIds = new Set<string>();
+
   constructor(
     private readonly store: PointerStore,
     private readonly codex: CodexRuntimeClient,
@@ -19,7 +21,7 @@ export class ThreadManager {
     const existingDefault = this.store.getThread(userKey, "default");
     if (existingDefault?.status === "active") return this.store.setActiveThread(userKey, "default");
 
-    const threadId = await this.codex.startThread({});
+    const threadId = await this.startManagedThread();
     return this.store.upsertThread({
       userKey,
       label: "default",
@@ -35,7 +37,7 @@ export class ThreadManager {
     if (this.store.getThread(userKey, normalized)) {
       throw new RoutingError(`Thread label '${normalized}' already exists. Use /switch ${normalized} or choose a new label.`, "duplicate_thread");
     }
-    const threadId = await this.codex.startThread({});
+    const threadId = await this.startManagedThread();
     return this.store.upsertThread({
       userKey,
       label: normalized,
@@ -153,7 +155,7 @@ export class ThreadManager {
       return existing;
     }
 
-    const threadId = await this.codex.startThread({});
+    const threadId = await this.startManagedThread();
     return this.store.upsertThread({
       userKey,
       label: normalized,
@@ -175,6 +177,7 @@ export class ThreadManager {
   async resumeThread(record: ThreadRecord): Promise<void> {
     const current = this.store.getThread(record.userKey, record.label) ?? record;
     await assertThreadRoutable(this.store, this.codex, current, this.workspaceRoot());
+    if (!current.lastRoutedAt && this.newlyStartedThreadIds.has(current.threadId)) return;
     try {
       await this.codex.resumeThread(current.threadId, true);
     } catch (error) {
@@ -223,6 +226,12 @@ export class ThreadManager {
 
   private workspaceRoot(): string {
     return this.options.workspaceRoot ?? getRuntimePathConfig().workspaceRoot;
+  }
+
+  private async startManagedThread(): Promise<string> {
+    const threadId = await this.codex.startThread({});
+    this.newlyStartedThreadIds.add(threadId);
+    return threadId;
   }
 
   private nextAutoLabel(userKey: UserKey): string {

@@ -66,7 +66,7 @@ describe("Router", () => {
 
     expect(store.getActiveThread("user:1")?.label).toBe("ops");
     expect(codex.turns.at(-1)).toEqual({ threadId: "thread-1", text: "status" });
-    expect(codex.resumedThreads).toContain("thread-1");
+    expect(codex.resumedThreads).toEqual([]);
     store.close();
   });
 
@@ -129,7 +129,7 @@ describe("Router", () => {
     await router.receive(message("hello after missing resume"));
 
     expect(codex.startedThreads).toEqual(["thread-1"]);
-    expect(codex.resumedThreads).toEqual(["stale-default", "thread-1"]);
+    expect(codex.resumedThreads).toEqual(["stale-default"]);
     expect(codex.turns).toEqual([{ threadId: "thread-1", text: "hello after missing resume" }]);
     expect(store.getActiveThread("user:1")).toMatchObject({ label: "default", threadId: "thread-1", status: "active" });
     store.close();
