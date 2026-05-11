@@ -1,7 +1,7 @@
 import type { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CapabilityError, RoutingError } from "../runtime/errors.js";
 import { getRuntimePathConfig } from "../config/env.js";
-import { assertThreadRoutable, readObservedThreadState } from "../runtime/thread-sync.js";
+import { assertThreadRoutable, isThreadNotFoundError, readObservedThreadState } from "../runtime/thread-sync.js";
 import type { ThreadLabel, ThreadRecord, UserKey } from "../runtime/types.js";
 import type { PointerStore } from "../store/pointer-store.js";
 
@@ -167,7 +167,15 @@ export class ThreadManager {
   async resumeThread(record: ThreadRecord): Promise<void> {
     const current = this.store.getThread(record.userKey, record.label) ?? record;
     await assertThreadRoutable(this.store, this.codex, current, this.workspaceRoot());
-    await this.codex.resumeThread(current.threadId, true);
+    try {
+      await this.codex.resumeThread(current.threadId, true);
+    } catch (error) {
+      if (isThreadNotFoundError(error)) {
+        this.store.markThreadStatus(current.userKey, current.label, "missing");
+        throw new RoutingError(`Thread '${current.label}' is missing; create /thread new instead.`, "thread_not_routable");
+      }
+      throw error;
+    }
   }
 
   async tryResumeThread(record: ThreadRecord): Promise<boolean> {

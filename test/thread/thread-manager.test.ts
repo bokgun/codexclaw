@@ -17,6 +17,19 @@ describe("ThreadManager", () => {
     store.close();
   });
 
+  test("marks read-verified active thread missing when rollout resume is absent", async () => {
+    const store = createPointerStore();
+    const pointer = store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "active", makeActive: true });
+    const codex = new MockCodex();
+    codex.failResumeOnly = true;
+    const manager = new ThreadManager(store, codex as never, { workspaceRoot: process.cwd() });
+
+    await expect(manager.resumeThread(pointer)).rejects.toThrow("create /thread new");
+
+    expect(store.getThread("user:1", "ops")?.status).toBe("missing");
+    store.close();
+  });
+
   test("refuses to archive the only active label when default is unavailable", async () => {
     const store = createPointerStore();
     store.upsertThread({ userKey: "user:1", label: "default", threadId: "thread-default", status: "archived" });
@@ -47,6 +60,7 @@ describe("ThreadManager", () => {
 
 class MockCodex {
   failResume = false;
+  failResumeOnly = false;
   archiveEnabled = true;
   archivedThreads: string[] = [];
   workspaceRoot = process.cwd();
@@ -69,6 +83,7 @@ class MockCodex {
 
   async resumeThread(): Promise<{}> {
     if (this.failResume) throw new Error("missing");
+    if (this.failResumeOnly) throw new Error('{"code":-32600,"message":"no rollout found for thread id thread-1"}');
     return {};
   }
 

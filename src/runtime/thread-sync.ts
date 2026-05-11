@@ -40,7 +40,7 @@ interface ListedThreads {
 
 const DEFAULT_PAGE_LIMIT = 5;
 const DEFAULT_PAGE_SIZE = 100;
-const NOT_FOUND_PATTERN = /(not\s*found|missing|unknown\s+thread|no\s+such|does\s+not\s+exist)/i;
+const NOT_FOUND_PATTERN = /(not\s*found|missing|unknown\s+thread|no\s+such|does\s+not\s+exist|no\s+rollout\s+found)/i;
 
 export async function syncThreadPointers(
   store: PointerStore,
