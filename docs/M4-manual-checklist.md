@@ -173,28 +173,28 @@ available only in the operator's private environment.
   curl -fsS http://127.0.0.1:4500/readyz
   ```
 
-- [ ] Start the CLI:
+- [x] Start the CLI:
 
   ```sh
   bun run cli
   ```
 
-- [ ] Run:
+- [x] Run:
 
   ```text
   /thread list
   ```
 
-- [ ] Confirm known thread pointers are listed or an empty state is explained.
-- [ ] Run:
+- [x] Confirm known thread pointers are listed or an empty state is explained.
+- [x] Run:
 
   ```text
   /skills list
   ```
 
-- [ ] Confirm Codex skills and host capabilities are shown with source/scope
+- [x] Confirm Codex skills and host capabilities are shown with source/scope
   labels and without private absolute path or dependency detail leakage.
-- [ ] Quit cleanly:
+- [x] Quit cleanly:
 
   ```text
   /quit
