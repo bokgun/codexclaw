@@ -14,7 +14,7 @@ export class ThreadManager {
 
   async ensureDefaultThread(userKey: UserKey): Promise<ThreadRecord> {
     const active = this.store.getActiveThread(userKey);
-    if (active) return active;
+    if (active && active.status !== "missing") return active;
 
     const existingDefault = this.store.getThread(userKey, "default");
     if (existingDefault?.status === "active") return this.store.setActiveThread(userKey, "default");

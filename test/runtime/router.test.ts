@@ -100,6 +100,23 @@ describe("Router", () => {
     store.close();
   });
 
+  test("normal messages recover from a missing active label by creating default", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+    store.upsertThread({ userKey: "user:1", label: "thread-1", threadId: "stale-thread", status: "missing", makeActive: true });
+
+    await router.receive(message("hello after stale rollout"));
+
+    expect(codex.startedThreads).toEqual(["thread-1"]);
+    expect(codex.turns).toEqual([{ threadId: "thread-1", text: "hello after stale rollout" }]);
+    expect(store.getActiveThread("user:1")).toMatchObject({ label: "default", threadId: "thread-1", status: "active" });
+    expect(store.getThread("user:1", "thread-1")).toMatchObject({ threadId: "stale-thread", status: "missing", isActive: false });
+    store.close();
+  });
+
   test("rejects duplicate explicit /new labels", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
