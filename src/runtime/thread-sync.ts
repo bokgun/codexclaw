@@ -132,7 +132,10 @@ export async function syncThreadPointers(
     warnings.push(`thread_sync_unknown:${pointer.threadId}`);
   }
 
-  for (const warning of warnings.slice(0, 10)) options.logger?.warn("thread_sync_warning", { warning });
+  for (const warning of warnings.slice(0, 10)) {
+    if (warning.startsWith("thread_sync_unknown:")) options.logger?.debug("thread_sync_warning", { warning });
+    else options.logger?.warn("thread_sync_warning", { warning });
+  }
   return result;
 }
 

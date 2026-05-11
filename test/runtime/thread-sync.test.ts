@@ -98,6 +98,21 @@ describe("thread sync", () => {
     store.close();
   });
 
+  test("logs read-only sync unknowns below warning level", async () => {
+    const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-sync-")));
+    const store = createPointerStore();
+    store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "missing", makeActive: true });
+    const codex = new MockCodex(workspaceRoot);
+    const logger = new MemoryLogger();
+
+    const result = await syncThreadPointers(store, codex as never, { workspaceRoot, pageLimit: 2, logger });
+
+    expect(result.warnings).toContain("thread_sync_unknown:thread-1");
+    expect(logger.debugs).toEqual([{ event: "thread_sync_warning", fields: { warning: "thread_sync_unknown:thread-1" } }]);
+    expect(logger.warns).toEqual([]);
+    store.close();
+  });
+
   test("quarantines cwd mismatches instead of marking them missing", async () => {
     const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-sync-")));
     const otherRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-other-")));
@@ -207,6 +222,29 @@ class MockCodex {
     this.reads.push(threadId);
     if (this.notFound.has(threadId)) throw new Error("thread not found");
     return { thread: thread(threadId, this.workspaceRoot, "active") };
+  }
+}
+
+class MemoryLogger {
+  debugs: Array<{ event: string; fields?: unknown }> = [];
+  infos: Array<{ event: string; fields?: unknown }> = [];
+  warns: Array<{ event: string; fields?: unknown }> = [];
+  errors: Array<{ event: string; fields?: unknown }> = [];
+
+  debug(event: string, fields?: unknown): void {
+    this.debugs.push({ event, fields });
+  }
+
+  info(event: string, fields?: unknown): void {
+    this.infos.push({ event, fields });
+  }
+
+  warn(event: string, fields?: unknown): void {
+    this.warns.push({ event, fields });
+  }
+
+  error(event: string, fields?: unknown): void {
+    this.errors.push({ event, fields });
   }
 }
 
