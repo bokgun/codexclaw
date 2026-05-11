@@ -39,6 +39,57 @@ keep the Codex workspace, codexclaw state, bearer token, and database on clear
 mount boundaries. See [Container reference](docs/deploy/container.md) before
 running a remote channel.
 
+Docker reference path:
+
+```sh
+export CODEXCLAW_WORKSPACE_ROOT=/absolute/path/to/project
+export CODEXCLAW_STATE_DIR="$HOME/.codexclaw"
+export CODEXCLAW_CODEX_TOKEN_FILE="$CODEXCLAW_STATE_DIR/codex.token"
+if [ -L "$CODEXCLAW_STATE_DIR" ]; then
+  echo "Refusing symlink state dir: $CODEXCLAW_STATE_DIR" >&2
+  exit 1
+fi
+case "$CODEXCLAW_CODEX_TOKEN_FILE" in
+  "$CODEXCLAW_WORKSPACE_ROOT"/*)
+    echo "Refusing workspace-internal token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$CODEXCLAW_STATE_DIR"
+chmod 700 "$CODEXCLAW_STATE_DIR"
+if [ -L "$CODEXCLAW_CODEX_TOKEN_FILE" ]; then
+  echo "Refusing symlink token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+  exit 1
+fi
+umask 077
+test -f "$CODEXCLAW_CODEX_TOKEN_FILE" || openssl rand -hex 32 > "$CODEXCLAW_CODEX_TOKEN_FILE"
+chmod 600 "$CODEXCLAW_CODEX_TOKEN_FILE"
+scripts/docker-compose-codex.sh build codex-app-server
+scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+scripts/docker-compose-codex.sh run --rm codex-app-server sh -lc 'touch .codexclaw-container-write-test && rm .codexclaw-container-write-test'
+scripts/docker-compose-codex.sh up codex-app-server
+```
+
+Use `scripts/docker-compose-codex.sh` rather than raw `docker compose`; it
+resolves `.env` paths with the same workspace/state/token rules as codexclaw
+before invoking Compose.
+
+In another shell, use host codexclaw against the loopback-only published
+app-server:
+
+```sh
+curl -fsS http://127.0.0.1:4500/readyz
+CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500 bun run cli
+```
+
+The Docker reference pins Codex CLI `0.128.0`, runs the app-server as a
+non-root user, provides the token as a read-only Docker secret, keeps Codex auth
+in an isolated container volume, and does not mount codexclaw state or SQLite
+into the app-server container. Apple Container is documented-only until a smoke
+run is recorded. On Linux, make sure the mounted workspace is writable by
+container UID/GID `10001`; the write probe above verifies that before app-server
+startup.
+
 Local smoke path:
 
 Install dependencies with Bun, inspect the installer plan, then start a

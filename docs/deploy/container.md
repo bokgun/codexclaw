@@ -1,8 +1,12 @@
 # Container Reference
 
-codexclaw does not publish a production image yet. This page documents the reference layout to use when building your own container or compose setup.
-The same boundaries apply whether the runtime is Docker Engine/Desktop, Apple
-Container, or another container runtime.
+This repository includes reference Docker artifacts for running
+`codex app-server` inside a container while keeping codexclaw on the host. The
+artifacts are deployment examples, not a production image publishing pipeline.
+
+Apple Container support is documented-only in this repository until a maintainer
+records a smoke run with Apple Container. Use the same mount, token, auth, and
+network boundaries described below if adapting the Docker image to that runtime.
 
 Use this as the recommended starting point for user-facing setup. The local
 loopback helper is convenient for development, but Telegram, Discord, shared
@@ -32,8 +36,106 @@ mounted.
 
 Advanced variants, such as running codexclaw in a separate runtime unit, must
 keep the same boundaries. The app-server runtime should receive only the
-workspace it may edit and a read-only single-file token mount; it must not
-receive the codexclaw state directory or SQLite database.
+workspace it may edit and a read-only token secret or single-file token mount;
+it must not receive the codexclaw state directory or SQLite database.
+
+## Docker Quick Start
+
+Prepare the host-side paths first. The workspace path must be absolute and must
+be the same path inside the container:
+
+```sh
+export CODEXCLAW_WORKSPACE_ROOT=/absolute/path/to/project
+export CODEXCLAW_STATE_DIR="$HOME/.codexclaw"
+export CODEXCLAW_CODEX_TOKEN_FILE="$CODEXCLAW_STATE_DIR/codex.token"
+if [ -L "$CODEXCLAW_STATE_DIR" ]; then
+  echo "Refusing symlink state dir: $CODEXCLAW_STATE_DIR" >&2
+  exit 1
+fi
+case "$CODEXCLAW_CODEX_TOKEN_FILE" in
+  "$CODEXCLAW_WORKSPACE_ROOT"/*)
+    echo "Refusing workspace-internal token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$CODEXCLAW_STATE_DIR"
+chmod 700 "$CODEXCLAW_STATE_DIR"
+if [ -L "$CODEXCLAW_CODEX_TOKEN_FILE" ]; then
+  echo "Refusing symlink token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+  exit 1
+fi
+umask 077
+test -f "$CODEXCLAW_CODEX_TOKEN_FILE" || openssl rand -hex 32 > "$CODEXCLAW_CODEX_TOKEN_FILE"
+chmod 600 "$CODEXCLAW_CODEX_TOKEN_FILE"
+```
+
+Build the reference image:
+
+```sh
+scripts/docker-compose-codex.sh build codex-app-server
+```
+
+Initialize Codex CLI authentication inside the isolated container-owned auth
+volume if the app-server has not already been logged in there:
+
+```sh
+scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+```
+
+Check that the final non-root `codex` user can write to the mounted workspace:
+
+```sh
+scripts/docker-compose-codex.sh run --rm codex-app-server sh -lc 'touch .codexclaw-container-write-test && rm .codexclaw-container-write-test'
+```
+
+Start the app-server:
+
+```sh
+scripts/docker-compose-codex.sh up codex-app-server
+```
+
+From another host shell, check readiness and use host codexclaw against the
+loopback-published app-server:
+
+```sh
+curl -fsS http://127.0.0.1:4500/readyz
+CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500 bun run cli
+```
+
+Inside the CLI, run:
+
+```text
+/thread list
+/skills list
+/quit
+```
+
+The compose file publishes only `127.0.0.1:4500:4500`, bind-mounts only the
+workspace, provides the token as a read-only Docker secret, and stores Codex CLI
+auth/config in the `codex-app-server-home` named volume. It does not mount the
+codexclaw state directory or SQLite database into the app-server container.
+Use `scripts/docker-compose-codex.sh` instead of raw `docker compose` so relative
+or legacy `.env` token paths are resolved exactly like codexclaw runtime paths
+before Compose reads them.
+
+The Dockerfile pins `@openai/codex@0.128.0`, runs as UID/GID `10001`, and starts
+`codex app-server` with:
+
+```text
+--listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /tmp/codexclaw/codex.token
+```
+
+The entrypoint reads the Docker secret as root, copies it to
+`/tmp/codexclaw/codex.token` as a `0400` file owned by UID/GID `10001`, then
+drops to the non-root `codex` user before starting app-server. The
+container-internal `0.0.0.0` listener is required so Docker port forwarding can
+reach the service. Host exposure remains loopback-only through compose.
+
+On Linux, bind-mounted workspaces must be writable by container UID/GID `10001`
+or Codex edits will fail even though readiness checks pass. Use a narrow host
+ACL, a disposable validation workspace owned by UID/GID `10001`, or another
+explicit permission setup for the intended project; do not solve this by
+mounting broader host paths or running the app-server as root.
 
 ## Mount Layout
 
@@ -43,7 +145,7 @@ Keep workspace, state, token, and database boundaries separate:
 | --- | --- | --- | --- |
 | Workspace | `/workspace` | read-write only where Codex should edit | Project files for `CODEXCLAW_WORKSPACE_ROOT`. Use the narrowest project mount that works, and keep the same absolute path visible to host codexclaw and the app-server container. |
 | State directory | host-side state path | read-write by the codexclaw user | codexclaw-owned metadata and default parent for token/db. Do not mount this directory into the app-server container. |
-| Token file | host-side token path, mounted read-only into app-server | read-only after creation where feasible | Bearer token used by `codex app-server`. Must not be group/world readable. |
+| Token file | host-side token path, provided read-only to app-server | read-only after creation where feasible | Bearer token used by `codex app-server`. Docker compose provides it as a secret; the entrypoint copies it to a non-root-owned `0400` runtime file before dropping privileges. Must not be group/world readable on the host. |
 | SQLite database | host-side DB path | read-write by codexclaw only | Thread pointers, labels, schedules, pending approval mappings, and prefs. Do not mount this into the app-server container. |
 
 Conversation bodies, raw tool calls, raw diffs, and approval histories are not codexclaw database data. They remain in Codex rollout storage.
@@ -62,11 +164,12 @@ CODEXCLAW_CODEX_WS=wss://codex.example.com
 CODEXCLAW_CODEX_LISTEN=ws://127.0.0.1:4500
 ```
 
-App-server container mounts:
+App-server container mounts and secrets:
 
 ```text
 /workspace -> /workspace, read-write only for the intended project
-/Users/example/.codexclaw/codex.token -> /run/secrets/codex.token, read-only single file
+/Users/example/.codexclaw/codex.token -> /run/secrets/codex.token, read-only Docker secret
+/run/secrets/codex.token -> /tmp/codexclaw/codex.token, copied 0400 before privilege drop
 ```
 
 The checked-in `bun run start:codex` helper is a loopback helper for local
@@ -78,21 +181,35 @@ internal-only listener that your reverse proxy or codexclaw runtime can reach,
 never with a public plaintext `ws://` listener.
 
 codexclaw reads the host-side token file. The app-server container receives the
-same token as a read-only single-file mount and uses it for bearer-token
+same token as a read-only Docker secret and uses it for bearer-token
 authentication. For split-container setups, apply the same rule: give the
-app-server only that token as a read-only single-file mount. Do not mount the
-codexclaw state directory or SQLite database into the app-server runtime.
+app-server only that token as a read-only secret or single-file mount. Do not
+mount the codexclaw state directory or SQLite database into the app-server runtime.
 `CODEXCLAW_CODEX_LISTEN` is used only by `bun run start:codex` in the runtime
 that starts the local app-server helper.
+
+## Codex Authentication Boundary
+
+The default Docker path uses an isolated named volume for `/home/codex/.codex`.
+Run `scripts/docker-compose-codex.sh run --rm codex-app-server codex login` to
+authenticate that volume through the normal entrypoint, which fixes ownership
+before dropping to the non-root `codex` user. This avoids mounting broad host
+home directories, cloud credential directories, SSH agents, Docker sockets, or
+unrelated host secrets into the app-server container.
+
+A read-only secret/config mount may be used instead only if it is narrowly
+scoped to Codex CLI authentication and does not include unrelated credentials.
+Do not mount `$HOME`, `~/.ssh`, cloud provider credential folders, or the
+codexclaw state directory as a shortcut.
 
 ## Runtime User And Filesystem
 
 For deployed or shared containers, run the app-server as a non-root user. Set
 the app-server container UID/GID so that user can write only the workspace paths
-Codex is expected to edit and can read the mounted token file:
+Codex is expected to edit and can read the provided token secret:
 
 - the workspace paths Codex is expected to edit
-- the read-only token file mount
+- the read-only token secret or single-file token mount
 
 The host-side codexclaw user owns `CODEXCLAW_STATE_DIR` and `CODEXCLAW_DB`.
 Those paths stay outside the Codex-editable workspace and are not mounted into
@@ -103,6 +220,31 @@ inspect but not edit. Mount only the project directories that are intended to be
 inside Codex's workspace permissions. Do not mount host secrets, broad home
 directories, Docker sockets, SSH agents, or cloud credential directories into
 the workspace.
+
+## Docker Inspection Checks
+
+Use these checks during release smoke:
+
+```sh
+scripts/docker-compose-codex.sh ps
+docker inspect "$(scripts/docker-compose-codex.sh ps -q codex-app-server)" \
+  --format '{{json .NetworkSettings.Ports}}'
+```
+
+Confirm the host publish is `127.0.0.1:4500`, not `0.0.0.0:4500`. Also inspect
+the compose file or container mounts and confirm only these app-server mounts
+are present:
+
+```text
+CODEXCLAW_WORKSPACE_ROOT -> same absolute path, read-write
+CODEXCLAW_CODEX_TOKEN_FILE -> /run/secrets/codex.token, read-only Docker secret
+/tmp/codexclaw/codex.token -> runtime copy owned by UID/GID 10001
+codex-app-server-home -> /home/codex/.codex
+```
+
+No codexclaw SQLite database, state directory, rollout history mirror, broad
+home directory, SSH agent, cloud credential directory, or Docker socket should
+be mounted into the app-server container.
 
 The state directory and token file must not be symlinks. codexclaw refuses symlink state, token, and database paths. Avoid symlinks from the workspace into `/state` or from `/state` back into the workspace, because they blur the boundary between Codex-editable files and codexclaw-owned metadata.
 

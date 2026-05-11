@@ -67,29 +67,99 @@ available only in the operator's private environment.
 
 ## 3. Container Isolation Preparation
 
-- [ ] Build or prepare the reference container from [Container Reference](deploy/container.md).
+- [ ] Export absolute paths for the Docker reference. The workspace path must
+  be the same absolute path on the host and inside the app-server container:
+
+  ```sh
+  export CODEXCLAW_WORKSPACE_ROOT=/absolute/path/to/project
+  export CODEXCLAW_STATE_DIR="$HOME/.codexclaw"
+  export CODEXCLAW_CODEX_TOKEN_FILE="$CODEXCLAW_STATE_DIR/codex.token"
+  if [ -L "$CODEXCLAW_STATE_DIR" ]; then
+    echo "Refusing symlink state dir: $CODEXCLAW_STATE_DIR" >&2
+    exit 1
+  fi
+  case "$CODEXCLAW_CODEX_TOKEN_FILE" in
+    "$CODEXCLAW_WORKSPACE_ROOT"/*)
+      echo "Refusing workspace-internal token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+      exit 1
+      ;;
+  esac
+  ```
+
+- [ ] Create the host-side token file if the installer did not already create
+  it:
+
+  ```sh
+  mkdir -p "$CODEXCLAW_STATE_DIR"
+  chmod 700 "$CODEXCLAW_STATE_DIR"
+  if [ -L "$CODEXCLAW_CODEX_TOKEN_FILE" ]; then
+    echo "Refusing symlink token file: $CODEXCLAW_CODEX_TOKEN_FILE" >&2
+    exit 1
+  fi
+  umask 077
+  test -f "$CODEXCLAW_CODEX_TOKEN_FILE" || openssl rand -hex 32 > "$CODEXCLAW_CODEX_TOKEN_FILE"
+  chmod 600 "$CODEXCLAW_CODEX_TOKEN_FILE"
+  ```
+
+- [ ] Build the Docker reference container from
+  [Container Reference](deploy/container.md):
+
+  ```sh
+  scripts/docker-compose-codex.sh build codex-app-server
+  ```
+
+- [ ] If the isolated container Codex auth volume is not logged in, initialize
+  it without mounting broad host credentials:
+
+  ```sh
+  scripts/docker-compose-codex.sh run --rm codex-app-server codex login
+  ```
+
 - [ ] Mount only the project directory Codex should edit as the workspace.
 - [ ] Confirm `CODEXCLAW_WORKSPACE_ROOT` is the same absolute path from host
   codexclaw and inside the app-server runtime.
 - [ ] Keep codexclaw state and SQLite on the host or codexclaw runtime, outside
   the Codex-editable workspace.
-- [ ] For split-container setups, mount only the read-only token file into the
-  app-server runtime; do not mount the codexclaw state directory or SQLite
-  database there.
+- [ ] For split-container setups, provide only the read-only token secret or
+  single-file token mount to the app-server runtime; do not mount the codexclaw
+  state directory or SQLite database there.
 - [ ] Confirm the container does not mount broad host paths such as `$HOME`,
   host secrets, Docker sockets, SSH agents, or cloud credential directories.
 - [ ] Run the containerized app-server as a non-root user where the selected
   runtime supports it.
+- [ ] Confirm the non-root container user can write to the mounted workspace:
+
+  ```sh
+  scripts/docker-compose-codex.sh run --rm codex-app-server sh -lc 'touch .codexclaw-container-write-test && rm .codexclaw-container-write-test'
+  ```
+
 - [ ] Confirm plaintext `ws://` app-server access is loopback-only or internal
   to the container/network namespace. For Docker, do not publish with
   `-p 4500:4500`; bind to `127.0.0.1` or keep the service internal.
+- [ ] Inspect the Docker publish and confirm it is loopback-only:
+
+  ```sh
+  docker inspect "$(scripts/docker-compose-codex.sh ps -q codex-app-server)" \
+    --format '{{json .NetworkSettings.Ports}}'
+  ```
+
 - [ ] For non-loopback or external access, expose only WSS through the reverse
   proxy and keep `CODEXCLAW_DEPLOYMENT_MODE=reverse_proxy_wss`.
+- [ ] Treat Apple Container as documented-only unless the same build, run,
+  `/readyz`, CLI `/thread list`, CLI `/skills list`, CLI `/quit`, and optional
+  minimal prompt smoke were completed with Apple Container and recorded in the
+  release notes.
 
 ## 4. App-Server Runtime Smoke
 
 - [ ] Start the isolated app-server runtime selected in section 1. For the
-  bare-metal development fallback, start the app-server helper:
+  Docker reference:
+
+  ```sh
+  scripts/docker-compose-codex.sh up codex-app-server
+  ```
+
+- [ ] For the bare-metal development fallback, start the app-server helper:
 
   ```sh
   bun run start:codex

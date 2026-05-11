@@ -1,0 +1,37 @@
+services:
+  codex-app-server:
+    build:
+      context: .
+      args:
+        CODEX_CLI_VERSION: "0.128.0"
+    image: codexclaw/codex-app-server:0.128.0
+    init: true
+    working_dir: ${CODEXCLAW_WORKSPACE_ROOT:?set CODEXCLAW_WORKSPACE_ROOT to an absolute host path}
+    ports:
+      - "127.0.0.1:4500:4500"
+    volumes:
+      - type: bind
+        source: ${CODEXCLAW_WORKSPACE_ROOT:?set CODEXCLAW_WORKSPACE_ROOT to an absolute host path}
+        target: ${CODEXCLAW_WORKSPACE_ROOT:?set CODEXCLAW_WORKSPACE_ROOT to an absolute host path}
+      - type: volume
+        source: codex-app-server-home
+        target: /home/codex/.codex
+    secrets:
+      - source: codex_ws_token
+        target: codex.token
+    command:
+      - codex
+      - app-server
+      - --listen
+      - ws://0.0.0.0:4500
+      - --ws-auth
+      - capability-token
+      - --ws-token-file
+      - /tmp/codexclaw/codex.token
+
+volumes:
+  codex-app-server-home:
+
+secrets:
+  codex_ws_token:
+    file: ${CODEXCLAW_CODEX_TOKEN_FILE:?set CODEXCLAW_CODEX_TOKEN_FILE to an existing token file}
