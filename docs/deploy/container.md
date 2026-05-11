@@ -7,6 +7,8 @@ artifacts are deployment examples, not a production image publishing pipeline.
 Apple Container support is documented-only in this repository until a maintainer
 records a smoke run with Apple Container. Use the same mount, token, auth, and
 network boundaries described below if adapting the Docker image to that runtime.
+The Apple-specific smoke criteria live in
+[Apple Container Checklist](../apple-container-checklist.md).
 
 Use this as the recommended starting point for user-facing setup. The local
 loopback helper is convenient for development, but Telegram, Discord, shared

@@ -6,60 +6,60 @@ available only in the operator's private environment.
 
 ## 1. Fresh Clone And Isolation Setup
 
-- [ ] Create a disposable validation workspace outside the development checkout,
+- [x] Create a disposable validation workspace outside the development checkout,
   for example `/Users/<name>/TempWorkspace/codexclaw-m4-smoke`.
-- [ ] Clone the repository into that disposable workspace and enter it.
-- [ ] Choose the app-server isolation path before installer setup: Docker
+- [x] Clone the repository into that disposable workspace and enter it.
+- [x] Choose the app-server isolation path before installer setup: Docker
   Engine/Desktop, Apple Container, or an equivalent runtime. Use bare-metal
   `local_loopback` only as a development smoke fallback.
-- [ ] Read [Container Reference](deploy/container.md) and decide the workspace,
+- [x] Read [Container Reference](deploy/container.md) and decide the workspace,
   state, token, and SQLite mount locations before answering installer prompts.
-- [ ] Use absolute paths when answering installer prompts. Do not put `~` in the
+- [x] Use absolute paths when answering installer prompts. Do not put `~` in the
   middle of a path, because only a leading `~` is shell-expanded.
 - [ ] If Codex reports that project-local config, hooks, or exec policies are
   disabled, record the warning by default. Trust project-local Codex config only
   after auditing those files and hooks, and only while running inside the
   selected isolated runtime without broad host secret mounts.
-- [ ] Install dependencies:
+- [x] Install dependencies:
 
   ```sh
   bun install
   ```
 
-- [ ] Inspect the installer without writing files:
+- [x] Inspect the installer without writing files:
 
   ```sh
   ./codexclaw.sh --dry-run
   ```
 
-- [ ] Confirm the dry-run summary redacts token and channel secret values.
-- [ ] Run the installer:
+- [x] Confirm the dry-run summary redacts token and channel secret values.
+- [x] Run the installer:
 
   ```sh
   ./codexclaw.sh
   ```
 
-- [ ] Confirm `.env` is created with private permissions.
-- [ ] Confirm `CODEXCLAW_WORKSPACE_ROOT` points at the project Codex should
+- [x] Confirm `.env` is created with private permissions.
+- [x] Confirm `CODEXCLAW_WORKSPACE_ROOT` points at the project Codex should
   inspect and edit, matching the container workspace mount if isolation is used.
-- [ ] Confirm `CODEXCLAW_STATE_DIR` stays outside the workspace unless this is
+- [x] Confirm `CODEXCLAW_STATE_DIR` stays outside the workspace unless this is
   disposable local development with both local-dev opt-ins enabled.
 
 ## 2. Static Validation
 
-- [ ] Verify the pinned app-server schema:
+- [x] Verify the pinned app-server schema:
 
   ```sh
   bun run schema:verify
   ```
 
-- [ ] Run typecheck:
+- [x] Run typecheck:
 
   ```sh
   bun run typecheck
   ```
 
-- [ ] Run tests:
+- [x] Run tests:
 
   ```sh
   bun test
@@ -67,7 +67,7 @@ available only in the operator's private environment.
 
 ## 3. Container Isolation Preparation
 
-- [ ] Export absolute paths for the Docker reference. The workspace path must
+- [x] Export absolute paths for the Docker reference. The workspace path must
   be the same absolute path on the host and inside the app-server container:
 
   ```sh
@@ -86,7 +86,7 @@ available only in the operator's private environment.
   esac
   ```
 
-- [ ] Create the host-side token file if the installer did not already create
+- [x] Create the host-side token file if the installer did not already create
   it:
 
   ```sh
@@ -101,7 +101,7 @@ available only in the operator's private environment.
   chmod 600 "$CODEXCLAW_CODEX_TOKEN_FILE"
   ```
 
-- [ ] Build the Docker reference container from
+- [x] Build the Docker reference container from
   [Container Reference](deploy/container.md):
 
   ```sh
@@ -115,28 +115,28 @@ available only in the operator's private environment.
   scripts/docker-compose-codex.sh run --rm codex-app-server codex login
   ```
 
-- [ ] Mount only the project directory Codex should edit as the workspace.
-- [ ] Confirm `CODEXCLAW_WORKSPACE_ROOT` is the same absolute path from host
+- [x] Mount only the project directory Codex should edit as the workspace.
+- [x] Confirm `CODEXCLAW_WORKSPACE_ROOT` is the same absolute path from host
   codexclaw and inside the app-server runtime.
-- [ ] Keep codexclaw state and SQLite on the host or codexclaw runtime, outside
+- [x] Keep codexclaw state and SQLite on the host or codexclaw runtime, outside
   the Codex-editable workspace.
-- [ ] For split-container setups, provide only the read-only token secret or
+- [x] For split-container setups, provide only the read-only token secret or
   single-file token mount to the app-server runtime; do not mount the codexclaw
   state directory or SQLite database there.
-- [ ] Confirm the container does not mount broad host paths such as `$HOME`,
+- [x] Confirm the container does not mount broad host paths such as `$HOME`,
   host secrets, Docker sockets, SSH agents, or cloud credential directories.
-- [ ] Run the containerized app-server as a non-root user where the selected
+- [x] Run the containerized app-server as a non-root user where the selected
   runtime supports it.
-- [ ] Confirm the non-root container user can write to the mounted workspace:
+- [x] Confirm the non-root container user can write to the mounted workspace:
 
   ```sh
   scripts/docker-compose-codex.sh run --rm codex-app-server sh -lc 'touch .codexclaw-container-write-test && rm .codexclaw-container-write-test'
   ```
 
-- [ ] Confirm plaintext `ws://` app-server access is loopback-only or internal
+- [x] Confirm plaintext `ws://` app-server access is loopback-only or internal
   to the container/network namespace. For Docker, do not publish with
   `-p 4500:4500`; bind to `127.0.0.1` or keep the service internal.
-- [ ] Inspect the Docker publish and confirm it is loopback-only:
+- [x] Inspect the Docker publish and confirm it is loopback-only:
 
   ```sh
   docker inspect "$(scripts/docker-compose-codex.sh ps -q codex-app-server)" \
@@ -148,7 +148,8 @@ available only in the operator's private environment.
 - [ ] Treat Apple Container as documented-only unless the same build, run,
   `/readyz`, CLI `/thread list`, CLI `/skills list`, CLI `/quit`, and optional
   minimal prompt smoke were completed with Apple Container and recorded in the
-  release notes.
+  release notes. Use the
+  [Apple Container Checklist](apple-container-checklist.md) for that runtime.
 
 ## 4. App-Server Runtime Smoke
 
