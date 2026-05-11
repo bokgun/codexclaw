@@ -117,6 +117,24 @@ describe("Router", () => {
     store.close();
   });
 
+  test("normal messages retry on a fresh default when active resume is missing", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+    store.upsertThread({ userKey: "user:1", label: "default", threadId: "stale-default", status: "active", makeActive: true });
+    codex.missingResumeIds.add("stale-default");
+
+    await router.receive(message("hello after missing resume"));
+
+    expect(codex.startedThreads).toEqual(["thread-1"]);
+    expect(codex.resumedThreads).toEqual(["stale-default", "thread-1"]);
+    expect(codex.turns).toEqual([{ threadId: "thread-1", text: "hello after missing resume" }]);
+    expect(store.getActiveThread("user:1")).toMatchObject({ label: "default", threadId: "thread-1", status: "active" });
+    store.close();
+  });
+
   test("rejects duplicate explicit /new labels", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();
@@ -628,6 +646,7 @@ class MockCodex {
   failNextTurn = false;
   metadataStatus = "active";
   failRead = false;
+  missingResumeIds = new Set<string>();
   archiveEnabled = true;
   unarchiveEnabled = false;
   unarchivedThreads: string[] = [];
@@ -688,6 +707,7 @@ class MockCodex {
 
   async resumeThread(threadId: string): Promise<{}> {
     this.resumedThreads.push(threadId);
+    if (this.missingResumeIds.has(threadId)) throw new Error(`no rollout found for thread id ${threadId}`);
     return {};
   }
 

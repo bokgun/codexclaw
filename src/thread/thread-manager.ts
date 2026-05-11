@@ -130,7 +130,15 @@ export class ThreadManager {
         "thread_not_routable"
       );
     }
-    if (existingActive?.threadId === thread.threadId) await this.resumeThread(thread);
+    if (existingActive?.threadId === thread.threadId) {
+      try {
+        await this.resumeThread(thread);
+      } catch (error) {
+        const refreshed = this.store.getThread(thread.userKey, thread.label);
+        if (refreshed?.status === "missing") return this.ensureDefaultThread(userKey);
+        throw error;
+      }
+    }
     return thread;
   }
 
