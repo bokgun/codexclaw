@@ -111,6 +111,43 @@ describe("thread sync", () => {
     store.close();
   });
 
+  test("routes read-verified active threads when complete lists omit them", async () => {
+    const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-sync-")));
+    const store = createPointerStore();
+    const pointer = store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "active", makeActive: true });
+    const codex = new MockCodex(workspaceRoot);
+
+    await expect(assertThreadRoutable(store, codex as never, pointer, workspaceRoot)).resolves.toBeUndefined();
+
+    expect(store.getThread("user:1", "ops")?.status).toBe("active");
+    expect(codex.reads).toEqual(["thread-1"]);
+    expect(codex.listParams).toEqual([
+      expect.objectContaining({ archived: false, cwd: workspaceRoot }),
+      expect.objectContaining({ archived: true, cwd: workspaceRoot })
+    ]);
+    store.close();
+  });
+
+  test("uses clearer wording when active route verification is unknown", async () => {
+    const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-sync-")));
+    const store = createPointerStore();
+    const pointer = store.upsertThread({ userKey: "user:1", label: "ops", threadId: "thread-1", status: "active", makeActive: true });
+    const codex = new MockCodex(workspaceRoot);
+    codex.activePages = [
+      [thread("thread-other", workspaceRoot, { type: "idle" })],
+      [thread("thread-more-1", workspaceRoot, { type: "idle" })],
+      [thread("thread-more-2", workspaceRoot, { type: "idle" })],
+      [thread("thread-more-3", workspaceRoot, { type: "idle" })],
+      [thread("thread-more-4", workspaceRoot, { type: "idle" })],
+      [thread("thread-more-5", workspaceRoot, { type: "idle" })]
+    ];
+
+    await expect(assertThreadRoutable(store, codex as never, pointer, workspaceRoot)).rejects.toThrow("locally active");
+
+    expect(store.getThread("user:1", "ops")?.status).toBe("active");
+    store.close();
+  });
+
   test("active list membership fails closed before partial archived scans", async () => {
     const workspaceRoot = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-sync-")));
     const store = createPointerStore();

@@ -181,6 +181,9 @@ export async function readObservedThreadState(
     if (options.verifyListMembership) {
       const listed = await findThreadInLists(codex, threadId, workspaceRoot, options);
       if (listed.state !== "unknown") return listed;
+      if (listed.reason === "not_listed") {
+        return { state: metadata.archived ? "archived" : "active", metadata, reason: "read_verified_unlisted" };
+      }
       return { state: "unknown", metadata, reason: listed.reason ?? "list_membership_unknown" };
     }
     if (options.classifyFromRead === false) {
@@ -232,6 +235,12 @@ export function sameNormalizedPath(left: string, right: string): boolean {
 }
 
 function notRoutable(record: Pick<ThreadRecord, "label" | "status">): RoutingError {
+  if (record.status === "active") {
+    return new RoutingError(
+      `Thread '${record.label}' is locally active but could not be verified in the connected Codex app-server. Create /thread new, or use /thread switch only when recovering a verified archived label.`,
+      "thread_not_routable"
+    );
+  }
   return new RoutingError(
     `Thread '${record.label}' is ${record.status}; create /thread new or explicitly recover an archived label with /thread switch.`,
     "thread_not_routable"
