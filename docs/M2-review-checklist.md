@@ -87,6 +87,16 @@ smoke-test checklist.
 - Agent deltas are coalesced enough to avoid one Telegram message per token.
 - Pending deltas flush before status messages and approval prompts.
 - Long outbound text is chunked below Telegram message limits.
+- Outbound document delivery is default-off and requires
+  `CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED=true`.
+- Document delivery only runs for live Telegram turns with explicit file
+  delivery intent; scheduled tasks and unattended routes cannot emit document
+  uploads.
+- Document delivery candidates come from successful completed current-turn
+  Codex file-change metadata for added files, not from assistant text alone.
+- Local documents are validated under `CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS`
+  with denied state/token/db/Codex rollout paths, symlink escape checks, size
+  limits, per-turn file limits, and just-in-time upload validation.
 - Callback data contains only opaque keys and action names, never prompt text,
   commands, diffs, tokens, or Codex payload bodies.
 - Telegram Bot API fetch-level errors and API errors redact bot tokens.
@@ -96,6 +106,8 @@ smoke-test checklist.
 - codexclaw only transports approval decisions; it does not bypass or weaken
   Codex sandbox or approval policy.
 - Bot tokens stay in host configuration and are not forwarded to Codex turns.
+- Telegram file delivery never exposes the Bot API, bot token, or a Telegram
+  sending tool to Codex.
 - Logs and thrown errors redact Telegram bot tokens.
 - AGENTS.md is not directly edited through channel commands.
 - Remote Telegram users cannot terminate the host process.

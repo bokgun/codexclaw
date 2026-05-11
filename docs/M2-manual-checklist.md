@@ -46,6 +46,27 @@ mode.
   Telegram prompt message id. Cold `bun run telegram` restarts fail closed for
   old persisted approval rows until the app-server protocol exposes a usable
   continuity proof.
+- With `CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED=true`, an explicit live
+  Telegram request to send a generated workspace file delivers that file as a
+  Telegram document after the turn completes. A normal answer that only mentions
+  a file path does not upload it.
+- File delivery rejects paths outside `CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS`,
+  denied state/token/db/Codex rollout paths, symlink escapes, and oversized
+  files with bounded fallback text.
+
+## Optional Telegram File Delivery Smoke
+
+Run this only after opting in with
+`CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED=true`.
+
+- [ ] Ask Telegram to create a small workspace file and send it as a document.
+  Confirm the document arrives in Telegram.
+- [ ] Ask Telegram about a workspace file path without asking it to send or
+  attach the file. Confirm no document is uploaded.
+- [ ] Ask Telegram to send a file outside the allowed roots. Confirm the bot
+  returns bounded fallback text and does not upload the file.
+- [ ] Ask Telegram to send an oversized file. Confirm the bot returns bounded
+  fallback text and does not upload the file.
 
 ## Security Notes
 

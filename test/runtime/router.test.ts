@@ -52,6 +52,35 @@ describe("Router", () => {
     store.close();
   });
 
+  test("binds queued turns only when each turn starts", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const bound: string[] = [];
+    const router = new Router(manager(store, codex), codex as never, sink, {
+      bindThread: (_thread, inbound) => bound.push(inbound.text)
+    });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    let releaseFirst!: () => void;
+    codex.blockNextTurn = () =>
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+    const first = router.receive(message("send the generated report file"));
+    await waitUntil(() => router.isThreadBusy("thread-1"));
+    const second = router.receive(message("ordinary queued turn"));
+    await waitUntil(() => sink.events.some((event) => event.kind === "status"));
+
+    expect(bound).toEqual(["send the generated report file"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(bound).toEqual(["send the generated report file", "ordinary queued turn"]);
+    store.close();
+  });
+
   test("slash commands switch active labels", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();

@@ -75,11 +75,54 @@ export type OutboundEvent =
       expiresAt: TimestampIso;
       options: readonly BranchSuggestionDecisionKind[];
       channelThreadKey?: string;
+    }
+  | {
+      kind: "document_delivery";
+      channel: ChannelName;
+      userKey: UserKey;
+      text: string;
+      documents: readonly LocalDocumentRef[];
+      channelThreadKey?: string;
     };
 
 export interface ChannelSink {
   send(event: OutboundEvent): Promise<{ channelMessageId?: string } | void>;
   flushDeltas?(): Promise<void>;
+}
+
+export interface LocalDocumentRef {
+  absolutePath: string;
+  displayName: string;
+  sizeBytes: number;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  contentType?: string;
+  source: "runtime_file_metadata";
+}
+
+export interface RejectedDocumentRef {
+  displayPath: string;
+  reason:
+    | "outside_allowed_roots"
+    | "missing"
+    | "not_regular_file"
+    | "too_large"
+    | "denied_path"
+    | "symlink_escape"
+    | "duplicate"
+      | "limit_exceeded";
+}
+
+export interface FileDeliveryPolicy {
+  enabled: boolean;
+  allowedRoots: readonly string[];
+  deniedRoots: readonly string[];
+  deniedSegments: readonly string[];
+  maxFileBytes: number;
+  maxFilesPerTurn: number;
+  workspaceRoot: string;
+  maxCandidatesPerTurn: number;
 }
 
 export interface ThreadRecord {
@@ -126,6 +169,7 @@ export type RuntimeEvent =
   | { kind: "turn_completed"; threadId?: ThreadId; turnId?: TurnId }
   | { kind: "turn_failed"; threadId?: ThreadId; turnId?: TurnId; error?: string }
   | { kind: "diff_updated"; threadId?: ThreadId; turnId?: TurnId; size?: number }
+  | { kind: "file_change"; threadId?: ThreadId; turnId?: TurnId; paths: readonly string[] }
   | { kind: "tool_event"; threadId?: ThreadId; turnId?: TurnId; itemId?: string; status?: string }
   | { kind: "approval_requested"; requestId: number | string; method: string; params: JsonValue }
   | { kind: "skills_changed" }

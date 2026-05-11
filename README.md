@@ -227,6 +227,10 @@ Optional Telegram environment:
 - `CODEXCLAW_TELEGRAM_DELTA_FLUSH_MS`: streaming coalescing window, default `10000`.
 - `CODEXCLAW_TELEGRAM_API_BASE_URL`: Bot API base URL for tests or self-hosting.
 - `CODEXCLAW_TELEGRAM_ALLOW_ALL_USERS_FOR_LOCAL_DEV=true`: local-only escape hatch for an empty allowlist.
+- `CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED=true`: opt in to outbound document delivery for live Telegram turns.
+- `CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS`: comma-separated roots that outbound document delivery may read from. Relative paths resolve from `CODEXCLAW_WORKSPACE_ROOT`; empty means the workspace root.
+- `CODEXCLAW_FILE_DELIVERY_MAX_BYTES`: max bytes for one outbound document, default `20971520` and capped at 49 MiB.
+- `CODEXCLAW_FILE_DELIVERY_MAX_FILES`: max outbound documents per turn, default `3`.
 
 M2 Telegram supports private chats only. Webhook signing and rate-limit
 hardening are out of scope for the long-polling path; callback data carries only
@@ -240,6 +244,15 @@ a continuity proof is added. Expired recovered callbacks can only recover to a
 safe decline, and recovered `Modify` rejects the original approval and asks for
 a fresh instruction because the original Modify context is intentionally
 in-memory only.
+
+Outbound Telegram document delivery is host-layer only. Codex does not receive
+the Telegram bot token or a Telegram send tool; codexclaw detects explicit file
+delivery intent in a live Telegram turn, validates current-turn files reported
+by successful completed Codex file-change metadata under the configured
+allowed roots, and sends valid added files with `sendDocument` after the turn
+completes. Scheduled tasks and unattended routes do not send documents.
+Candidate paths, file contents, raw diffs, tool bodies, and delivery history
+are not persisted by codexclaw.
 
 ## Discord Runtime
 

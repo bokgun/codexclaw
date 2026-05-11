@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rename, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   TelegramChannelAdapter,
   TelegramFetchApiClient,
@@ -7,6 +10,7 @@ import {
   type TelegramGetUpdatesParams,
   type TelegramMessage,
   type TelegramSendChatActionParams,
+  type TelegramSendDocumentParams,
   type TelegramSendMessageParams,
   type TelegramUpdate
 } from "../../src/channel/telegram.js";
@@ -93,6 +97,180 @@ describe("TelegramChannelAdapter", () => {
     await adapter.send({ kind: "status", channel: "telegram", userKey: "telegram:42", channelThreadKey: "telegram:42", text: "Turn completed." });
 
     expect(api.sent.map((message) => message.text)).toEqual(["Hello.", "Turn completed."]);
+    await adapter.close();
+  });
+
+  test("flushes deltas, sends safe text, then sends local documents", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api, { deltaFlushMs: 10_000 });
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "report.txt");
+    await writeFile(documentPath, "report body");
+
+    await adapter.send({ kind: "agent_delta", channel: "telegram", userKey: "telegram:42", channelThreadKey: "telegram:42", text: "done" });
+    await adapter.send({
+      kind: "text",
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42",
+      text: "Sending report.",
+      attachments: [{ kind: "local_document", path: documentPath, displayName: "../report.txt", sizeBytes: 11, contentType: "text/plain" }]
+    });
+
+    expect(api.sent.map((message) => message.text)).toEqual(["done", "Sending report."]);
+    expect(api.documents).toEqual([
+      {
+        chat_id: 42,
+        document: {
+          path: documentPath,
+          filename: "report.txt",
+          sizeBytes: 11,
+          dev: expect.any(Number),
+          ino: expect.any(Number),
+          mtimeMs: expect.any(Number),
+          contentType: "text/plain"
+        }
+      }
+    ]);
+    await adapter.close();
+  });
+
+  test("falls back without uploading changed, oversized, or symlink documents", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const changedPath = join(dir, "changed.txt");
+    const oversizedPath = join(dir, "oversized.bin");
+    const targetPath = join(dir, "target.txt");
+    const symlinkPath = join(dir, "linked.txt");
+    await writeFile(changedPath, "changed");
+    await writeFile(oversizedPath, new Uint8Array(49 * 1024 * 1024 + 1));
+    await writeFile(targetPath, "target");
+    await symlink(targetPath, symlinkPath);
+
+    await adapter.send({
+      kind: "text",
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42",
+      text: "Sending files.",
+      attachments: [
+        { kind: "local_document", path: changedPath, displayName: "changed.txt", sizeBytes: 1 },
+        { kind: "local_document", path: oversizedPath, displayName: "oversized.bin" },
+        { kind: "local_document", path: symlinkPath, displayName: "linked.txt" }
+      ]
+    });
+
+    expect(api.documents).toHaveLength(0);
+    expect(api.sent.map((message) => message.text)).toEqual([
+      "Sending files.",
+      [
+        "Some files could not be sent:",
+        "- changed.txt: file changed before upload",
+        "- oversized.bin: file is too large for Telegram delivery",
+        "- linked.txt: symlink documents are not sent"
+      ].join("\n")
+    ]);
+    await adapter.close();
+  });
+
+  test("rejects same-size document swaps after validation metadata is captured", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "report.txt");
+    const replacementPath = join(dir, "replacement.txt");
+    await writeFile(documentPath, "first");
+    const original = await stat(documentPath);
+    await writeFile(replacementPath, "other");
+    await rename(replacementPath, documentPath);
+
+    await adapter.send({
+      kind: "text",
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42",
+      text: "Sending file.",
+      attachments: [
+        {
+          kind: "local_document",
+          path: documentPath,
+          displayName: "report.txt",
+          sizeBytes: original.size,
+          dev: original.dev,
+          ino: original.ino,
+          mtimeMs: original.mtimeMs
+        }
+      ]
+    });
+
+    expect(api.documents).toHaveLength(0);
+    expect(api.sent.at(-1)?.text).toContain("- report.txt: file changed before upload");
+    await adapter.close();
+  });
+
+  test("falls back when Telegram document upload fails without logging file contents", async () => {
+    const api = new FakeTelegramApi({ failDocuments: true });
+    const logger = new MemoryLogger();
+    const adapter = new TelegramChannelAdapter({
+      config: telegramConfig(),
+      apiClient: api,
+      logger,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+      keyFactory: () => "k1",
+      startPolling: false
+    });
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "secret.txt");
+    await writeFile(documentPath, "file contents must not appear in logs");
+
+    await adapter.send({
+      kind: "text",
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42",
+      text: "Sending file.",
+      attachments: [{ kind: "local_document", path: documentPath, displayName: "secret.txt" }]
+    });
+
+    expect(api.documents).toHaveLength(1);
+    expect(api.sent.at(-1)?.text).toContain("- secret.txt: Telegram upload failed");
+    expect(JSON.stringify(logger.warns)).not.toContain("file contents must not appear in logs");
+    expect(JSON.stringify(logger.warns)).not.toContain(documentPath);
+    expect(JSON.stringify(logger.warns)).not.toContain("123:secret");
+    await adapter.close();
+  });
+
+  test("maps local upload reason codes to local fallback text", async () => {
+    const api = new FakeTelegramApi({ documentError: new Error("local_document_changed") });
+    const logger = new MemoryLogger();
+    const adapter = new TelegramChannelAdapter({
+      config: telegramConfig(),
+      apiClient: api,
+      logger,
+      now: () => new Date("2026-05-01T00:00:00.000Z"),
+      keyFactory: () => "k1",
+      startPolling: false
+    });
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "changed.txt");
+    await writeFile(documentPath, "changed");
+
+    await adapter.send({
+      kind: "text",
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42",
+      text: "Sending file.",
+      attachments: [{ kind: "local_document", path: documentPath, displayName: "changed.txt" }]
+    });
+
+    expect(api.documents).toHaveLength(1);
+    expect(api.sent.at(-1)?.text).toContain("- changed.txt: file changed before upload");
+    expect(logger.warns).toEqual([
+      { event: "telegram_document_send_failed", fields: { userKey: "telegram:42", reason: "local_document_changed" } }
+    ]);
+    expect(JSON.stringify(logger.warns)).not.toContain(documentPath);
     await adapter.close();
   });
 
@@ -516,6 +694,56 @@ describe("TelegramChannelAdapter", () => {
     await expect(client.getUpdates({ timeout: 1, allowed_updates: [] })).rejects.not.toThrow("123:secret");
   });
 
+  test("redacts bot tokens from sendDocument fetch errors", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "report.txt");
+    await writeFile(documentPath, "report");
+    const client = new TelegramFetchApiClient({
+      botToken: "123:secret",
+      fetch: (() => {
+        throw new Error("connect https://api.telegram.org/bot123:secret/sendDocument failed");
+      }) as typeof fetch
+    });
+
+    await expect(client.sendDocument({ chat_id: 42, document: { path: documentPath, filename: "report.txt", sizeBytes: 6 } })).rejects.toThrow(
+      "[telegram-bot-token]"
+    );
+    await expect(client.sendDocument({ chat_id: 42, document: { path: documentPath, filename: "report.txt", sizeBytes: 6 } })).rejects.not.toThrow(
+      "123:secret"
+    );
+  });
+
+  test("TelegramFetchApiClient sends sendDocument as multipart form data", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "codexclaw-telegram-doc-"));
+    const documentPath = join(dir, "report.txt");
+    await writeFile(documentPath, "report");
+    let requestedUrl = "";
+    let requestedBody: BodyInit | null | undefined;
+    const client = new TelegramFetchApiClient({
+      botToken: "123:secret",
+      fetch: ((url, init) => {
+        requestedUrl = String(url);
+        requestedBody = init?.body;
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, result: { message_id: 1, chat: { id: 42, type: "private" } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          })
+        );
+      }) as typeof fetch
+    });
+
+    await client.sendDocument({ chat_id: 42, document: { path: documentPath, filename: "../report.txt", sizeBytes: 6 } });
+
+    expect(requestedUrl).toBe("https://api.telegram.org/bot123:secret/sendDocument");
+    expect(requestedBody).toBeInstanceOf(FormData);
+    const form = requestedBody as FormData;
+    expect(form.get("chat_id")).toBe("42");
+    const file = form.get("document") as File;
+    expect(file.name).toBe("report.txt");
+    expect(await file.text()).toBe("report");
+  });
+
   test("logs and stops on duplicate long-polling Telegram conflicts", async () => {
     const api = new ConflictTelegramApi();
     const logger = new MemoryLogger();
@@ -574,14 +802,19 @@ function telegramConfig(overrides: Partial<TelegramConfig> = {}): TelegramConfig
 
 class FakeTelegramApi implements TelegramApiClient {
   readonly sent: TelegramSendMessageParams[] = [];
+  readonly documents: TelegramSendDocumentParams[] = [];
   readonly answers: TelegramAnswerCallbackQueryParams[] = [];
   readonly actions: TelegramSendChatActionParams[] = [];
   private readonly perChatMessageIds: boolean;
+  private readonly failDocuments: boolean;
+  private readonly documentError?: Error;
   private readonly nextMessageIdByChat = new Map<string, number>();
   private nextMessageId = 1;
 
-  constructor(options: { perChatMessageIds?: boolean } = {}) {
+  constructor(options: { perChatMessageIds?: boolean; failDocuments?: boolean; documentError?: Error } = {}) {
     this.perChatMessageIds = options.perChatMessageIds ?? false;
+    this.failDocuments = options.failDocuments ?? false;
+    this.documentError = options.documentError;
   }
 
   async getUpdates(_params: TelegramGetUpdatesParams): Promise<readonly TelegramUpdate[]> {
@@ -595,6 +828,17 @@ class FakeTelegramApi implements TelegramApiClient {
       message_id: this.takeMessageId(chatId),
       chat: { id: chatId, type: "private" },
       text: params.text
+    };
+  }
+
+  async sendDocument(params: TelegramSendDocumentParams): Promise<TelegramMessage> {
+    this.documents.push(params);
+    if (this.documentError) throw this.documentError;
+    if (this.failDocuments) throw new Error("Telegram sendDocument failed: token 123:secret");
+    const chatId = Number(params.chat_id);
+    return {
+      message_id: this.takeMessageId(chatId),
+      chat: { id: chatId, type: "private" }
     };
   }
 

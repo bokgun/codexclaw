@@ -256,6 +256,8 @@ export class CodexRuntimeClient {
       case "item/started":
       case "item/completed": {
         const item = asObject(params.item);
+        const filePaths = notification.method === "item/completed" ? readAddedFileChangePaths(item) : [];
+        if (filePaths.length > 0) this.emit({ kind: "file_change", threadId, turnId, paths: filePaths });
         this.emit({
           kind: "tool_event",
           threadId,
@@ -312,6 +314,24 @@ function asObject(value: JsonValue | undefined): JsonObject {
 function readString(object: JsonObject, key: string): string | undefined {
   const value = object[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readAddedFileChangePaths(item: JsonObject): readonly string[] {
+  if (readString(item, "type") !== "fileChange") return [];
+  const status = readString(item, "status");
+  if (status !== "completed") return [];
+  const changes = item.changes;
+  if (!Array.isArray(changes)) return [];
+
+  const paths: string[] = [];
+  for (const rawChange of changes) {
+    const change = asObject(rawChange as JsonValue);
+    const kind = asObject(change.kind);
+    if (readString(kind, "type") !== "add") continue;
+    const path = readString(change, "path");
+    if (path) paths.push(path);
+  }
+  return paths;
 }
 
 function boundedErrorShape(error: unknown): string {

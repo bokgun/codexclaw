@@ -41,7 +41,7 @@ export type ParsedChannelInput =
   | { kind: "message"; message: NormalizedMessage };
 
 export interface OutboundMessage {
-  kind?: "text" | "agent_delta" | "status";
+  kind?: "text" | "agent_delta" | "status" | "document_delivery";
   channel: ChannelKind;
   userKey: UserKey;
   text: string;
@@ -65,6 +65,17 @@ export type OutboundAttachment =
       filesChanged?: number;
       additions?: number;
       deletions?: number;
+    }
+  | {
+      kind: "local_document";
+      path: string;
+      displayName?: string;
+      sizeBytes?: number;
+      dev?: number;
+      ino?: number;
+      mtimeMs?: number;
+      contentType?: string;
+      fallbackText?: string;
     };
 
 export interface ChannelSendResult {

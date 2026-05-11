@@ -6,6 +6,7 @@ import { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { CodexWsClient } from "../codex/ws-client.js";
 import {
   getCodexConnectionConfig,
+  getFileDeliveryConfig,
   getRuntimePathConfig,
   getSchedulerConfig,
   getThreadCapabilityConfig,
@@ -17,6 +18,7 @@ import { ThreadManager } from "../thread/thread-manager.js";
 import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
 import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
 import { EventDispatcher } from "./events.js";
+import { FileDeliveryCollector, hasTelegramFileDeliveryIntent } from "./file-delivery.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
 import { Router } from "./router.js";
 import { SchedulerCoordinator, type SchedulerOptions } from "./scheduler.js";
@@ -90,7 +92,11 @@ export class HostRuntime {
     this.codex = new CodexRuntimeClient(transport, { capabilities: getThreadCapabilityConfig() });
     const sink = new ChannelAdapterSink(this.channel);
     this.sink = sink;
-    const dispatcher = new EventDispatcher(sink, this.logger);
+    const fileDeliveryPolicy = getFileDeliveryConfig();
+    const dispatcher = new EventDispatcher(sink, this.logger, {
+      fileDeliveryPolicy,
+      fileDeliveryCollector: new FileDeliveryCollector()
+    });
     const runtimePaths = getRuntimePathConfig();
     const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: runtimePaths.workspaceRoot });
     const wikiService = this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService();
@@ -114,7 +120,17 @@ export class HostRuntime {
           channelThreadKey: message.channelThreadKey
         };
         this.threadTargets.set(thread.threadId, target);
-        dispatcher.bindThread(thread.threadId, target);
+        dispatcher.bindThread(thread.threadId, target, {
+          fileDelivery: {
+            enabled:
+              fileDeliveryPolicy.enabled &&
+              message.channel === "telegram" &&
+              !message.channelMessageId.startsWith("task:") &&
+              hasTelegramFileDeliveryIntent(message.text),
+            userKey: message.userKey,
+            channelThreadKey: message.channelThreadKey
+          }
+        });
       }
     });
     this.approvals = new ApprovalBridge(this.store, this.codex, this.channel, this.router, this.logger, undefined, undefined, {
@@ -126,7 +142,13 @@ export class HostRuntime {
           channelThreadKey: target.channelThreadKey
         };
         this.threadTargets.set(threadId, bound);
-        dispatcher.bindThread(threadId, bound);
+        dispatcher.bindThread(threadId, bound, {
+          fileDelivery: {
+            enabled: false,
+            userKey: bound.userKey,
+            channelThreadKey: bound.channelThreadKey
+          }
+        });
       },
       modifyTtlMs: this.approvalModifyTtlMs
     });
@@ -148,6 +170,7 @@ export class HostRuntime {
       if (this.stopping) return;
       this.logger.warn("codex_disconnected", { error: error?.message });
       this.approvals.invalidateAll("codex_disconnected");
+      dispatcher.clearFileDelivery();
       this.quarantineBusyThreads();
       void this.reconnect();
     });
@@ -380,11 +403,24 @@ class ChannelAdapterSink implements ChannelSink {
     }
 
     return this.channel.send({
-      kind: event.kind,
+      kind: event.kind === "document_delivery" ? "text" : event.kind,
       channel: event.channel,
       userKey: event.userKey,
       text: event.kind === "agent_delta" ? event.delta : event.text,
-      channelThreadKey: event.channelThreadKey
+      channelThreadKey: event.channelThreadKey,
+      attachments:
+        event.kind === "document_delivery"
+          ? event.documents.map((document) => ({
+              kind: "local_document" as const,
+              path: document.absolutePath,
+              displayName: document.displayName,
+              sizeBytes: document.sizeBytes,
+              dev: document.dev,
+              ino: document.ino,
+              mtimeMs: document.mtimeMs,
+              contentType: document.contentType
+            }))
+          : undefined
     });
   }
 }

@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, stat } from "node:fs/promises";
+import { basename } from "node:path";
 import { createJsonLineLogger, type RuntimeLogger } from "../runtime/log.js";
 import { redactTelegramSecrets, type TelegramConfig } from "../config/env.js";
 import type {
@@ -12,6 +15,7 @@ import type {
   ChannelMessageId,
   ChannelSendResult,
   NormalizedMessage,
+  OutboundAttachment,
   OutboundMessage,
   UserKey
 } from "./types.js";
@@ -19,10 +23,12 @@ import type {
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const SAFE_CHUNK_LIMIT = 3900;
 const RECENT_UPDATE_LIMIT = 256;
+const TELEGRAM_DOCUMENT_MAX_BYTES = 49 * 1024 * 1024;
 
 export interface TelegramApiClient {
   getUpdates(params: TelegramGetUpdatesParams, signal?: AbortSignal): Promise<readonly TelegramUpdate[]>;
   sendMessage(params: TelegramSendMessageParams): Promise<TelegramMessage>;
+  sendDocument(params: TelegramSendDocumentParams): Promise<TelegramMessage>;
   editMessageText?(params: TelegramEditMessageTextParams): Promise<TelegramMessage | true>;
   answerCallbackQuery(params: TelegramAnswerCallbackQueryParams): Promise<true>;
   sendChatAction?(params: TelegramSendChatActionParams): Promise<true>;
@@ -50,6 +56,23 @@ export interface TelegramSendMessageParams {
   reply_to_message_id?: number;
   disable_web_page_preview?: boolean;
   reply_markup?: TelegramReplyMarkup;
+}
+
+export interface TelegramSendDocumentParams {
+  chat_id: number | string;
+  document: LocalFileUploadRef;
+  caption?: string;
+  reply_to_message_id?: number;
+}
+
+export interface LocalFileUploadRef {
+  path: string;
+  filename: string;
+  sizeBytes?: number;
+  dev?: number;
+  ino?: number;
+  mtimeMs?: number;
+  contentType?: string;
 }
 
 export interface TelegramEditMessageTextParams {
@@ -129,6 +152,41 @@ export class TelegramFetchApiClient implements TelegramApiClient {
 
   sendMessage(params: TelegramSendMessageParams): Promise<TelegramMessage> {
     return this.call<TelegramMessage>("sendMessage", params);
+  }
+
+  async sendDocument(params: TelegramSendDocumentParams): Promise<TelegramMessage> {
+    const url = `${this.apiBaseUrl}/bot${this.botToken}/sendDocument`;
+    try {
+      let upload: { blob: Blob; filename: string };
+      try {
+        upload = await openLocalFileUpload(params.document);
+      } catch (error) {
+        if (error instanceof LocalDocumentUploadError) throw error;
+        throw new LocalDocumentUploadError("local_document_unreadable");
+      }
+      const body = new FormData();
+      body.append("chat_id", String(params.chat_id));
+      if (params.caption) body.append("caption", params.caption);
+      if (params.reply_to_message_id !== undefined) body.append("reply_to_message_id", String(params.reply_to_message_id));
+      body.append("document", upload.blob, upload.filename);
+
+      const response = await this.fetchImpl(url, {
+        method: "POST",
+        body
+      });
+      const payload = (await response.json().catch(() => undefined)) as TelegramApiResponse<TelegramMessage> | undefined;
+      if (!response.ok || !payload?.ok) {
+        const description = payload && "description" in payload ? payload.description : response.statusText;
+        throw new Error(`Telegram sendDocument failed: ${description}`);
+      }
+      return payload.result;
+    } catch (error) {
+      if (error instanceof LocalDocumentUploadError) {
+        throw new Error(error.message);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(redactTelegramSecrets(message, this.botToken));
+    }
   }
 
   editMessageText(params: TelegramEditMessageTextParams): Promise<TelegramMessage | true> {
@@ -261,7 +319,10 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
     await this.flushDeltasFor(chatId);
     const text = message.text || " ";
-    return this.sendChunked(chatId, text, parseTelegramMessageId(message.replyToMessageId));
+    const replyTo = parseTelegramMessageId(message.replyToMessageId);
+    const result = await this.sendChunked(chatId, text, replyTo);
+    await this.sendLocalDocuments(chatId, message.attachments);
+    return result;
   }
 
   async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalPrompt> {
@@ -712,6 +773,35 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     return { channelMessageId: first };
   }
 
+  private async sendLocalDocuments(chatId: number | string, attachments: readonly OutboundAttachment[] | undefined): Promise<void> {
+    const documents = attachments?.filter((attachment) => attachment.kind === "local_document") ?? [];
+    if (documents.length === 0) return;
+
+    const rejected: Array<{ name: string; reason: string; fallbackText?: string }> = [];
+    for (const document of documents) {
+      const upload = await validateLocalDocumentAttachment(document);
+      if (!upload.ok) {
+        rejected.push({ name: safeDocumentName(document), reason: upload.reason, fallbackText: document.fallbackText });
+        continue;
+      }
+
+      try {
+        await this.api.sendDocument({ chat_id: chatId, document: upload.document });
+      } catch (error) {
+        const fallbackReason = localUploadFallbackReason(error);
+        this.logger.warn("telegram_document_send_failed", {
+          userKey: String(chatId).startsWith("-") ? undefined : `telegram:${chatId}`,
+          reason: fallbackReason
+        });
+        rejected.push({ name: upload.document.filename, reason: fallbackReason, fallbackText: document.fallbackText });
+      }
+    }
+
+    if (rejected.length > 0) {
+      await this.sendChunked(chatId, formatDocumentFallback(rejected));
+    }
+  }
+
   private resolveChatId(message: Pick<OutboundMessage, "channelThreadKey" | "userKey">): number {
     if (message.channelThreadKey) return parseTelegramChannelThreadKey(message.channelThreadKey);
     return parseTelegramUserKey(message.userKey);
@@ -805,6 +895,126 @@ function parseTelegramChannelThreadKey(channelThreadKey: string): number {
 function parseTelegramMessageId(channelMessageId: ChannelMessageId | undefined): number | undefined {
   const match = channelMessageId ? /^telegram:-?\d+:(\d+)$/.exec(channelMessageId) : undefined;
   return match ? Number.parseInt(match[1], 10) : undefined;
+}
+
+type LocalDocumentAttachment = Extract<OutboundAttachment, { kind: "local_document" }>;
+
+type LocalDocumentValidation =
+  | { ok: true; document: LocalFileUploadRef }
+  | { ok: false; reason: "missing" | "symlink_escape" | "not_regular_file" | "too_large" | "file_changed" };
+
+async function validateLocalDocumentAttachment(attachment: LocalDocumentAttachment): Promise<LocalDocumentValidation> {
+  try {
+    const link = await lstat(attachment.path);
+    if (link.isSymbolicLink()) return { ok: false, reason: "symlink_escape" };
+    const file = await stat(attachment.path);
+    if (!file.isFile()) return { ok: false, reason: "not_regular_file" };
+    if (file.size > TELEGRAM_DOCUMENT_MAX_BYTES) return { ok: false, reason: "too_large" };
+    if (attachment.sizeBytes !== undefined && file.size !== attachment.sizeBytes) return { ok: false, reason: "file_changed" };
+    if (attachment.dev !== undefined && file.dev !== attachment.dev) return { ok: false, reason: "file_changed" };
+    if (attachment.ino !== undefined && file.ino !== attachment.ino) return { ok: false, reason: "file_changed" };
+    if (attachment.mtimeMs !== undefined && file.mtimeMs !== attachment.mtimeMs) return { ok: false, reason: "file_changed" };
+
+    return {
+      ok: true,
+      document: {
+        path: attachment.path,
+        filename: safeDocumentName(attachment),
+        sizeBytes: file.size,
+        dev: file.dev,
+        ino: file.ino,
+        mtimeMs: file.mtimeMs,
+        contentType: attachment.contentType
+      }
+    };
+  } catch {
+    return { ok: false, reason: "missing" };
+  }
+}
+
+async function openLocalFileUpload(ref: LocalFileUploadRef): Promise<{ blob: Blob; filename: string }> {
+  const handle = await open(ref.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
+    throw new LocalDocumentUploadError("local_document_unreadable");
+  });
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new LocalDocumentUploadError("local_document_not_file");
+    if (before.size > TELEGRAM_DOCUMENT_MAX_BYTES) throw new LocalDocumentUploadError("local_document_too_large");
+    if (ref.sizeBytes !== undefined && before.size !== ref.sizeBytes) throw new LocalDocumentUploadError("local_document_changed");
+    if (ref.dev !== undefined && before.dev !== ref.dev) throw new LocalDocumentUploadError("local_document_changed");
+    if (ref.ino !== undefined && before.ino !== ref.ino) throw new LocalDocumentUploadError("local_document_changed");
+    if (ref.mtimeMs !== undefined && before.mtimeMs !== ref.mtimeMs) throw new LocalDocumentUploadError("local_document_changed");
+
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) {
+      throw new LocalDocumentUploadError("local_document_changed");
+    }
+    return { blob: new Blob([bytes], { type: ref.contentType || "application/octet-stream" }), filename: sanitizeFilename(ref.filename) };
+  } finally {
+    await handle.close();
+  }
+}
+
+class LocalDocumentUploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalDocumentUploadError";
+  }
+}
+
+function safeDocumentName(attachment: LocalDocumentAttachment): string {
+  return sanitizeFilename(attachment.displayName || basename(attachment.path) || "document");
+}
+
+function sanitizeFilename(filename: string): string {
+  const cleaned = basename(filename).replace(/[^\w .()[\]{}@+-]/g, "_").replace(/\s+/g, " ").trim();
+  return cleaned || "document";
+}
+
+function formatDocumentFallback(rejected: readonly { name: string; reason: string; fallbackText?: string }[]): string {
+  const lines = ["Some files could not be sent:"];
+  for (const item of rejected.slice(0, 5)) {
+    const fallback = item.fallbackText?.trim();
+    lines.push(`- ${item.name}: ${fallback || documentRejectionText(item.reason)}`);
+  }
+  if (rejected.length > 5) lines.push(`- ${rejected.length - 5} more file(s) were not sent.`);
+  return lines.join("\n");
+}
+
+function documentRejectionText(reason: string): string {
+  switch (reason) {
+    case "missing":
+      return "file is missing";
+    case "symlink_escape":
+      return "symlink documents are not sent";
+    case "not_regular_file":
+      return "path is not a regular file";
+    case "too_large":
+      return "file is too large for Telegram delivery";
+    case "file_changed":
+    case "local_document_changed":
+      return "file changed before upload";
+    case "local_document_unreadable":
+      return "file could not be read";
+    case "local_document_not_file":
+      return "path is not a regular file";
+    case "local_document_too_large":
+      return "file is too large for Telegram delivery";
+    case "send_failed":
+      return "Telegram upload failed";
+    default:
+      return "unsupported document";
+  }
+}
+
+function localUploadFallbackReason(error: unknown): string {
+  const reason = redactTelegramSecrets(error instanceof Error ? error.message : String(error), "");
+  if (reason.includes("local_document_changed")) return "local_document_changed";
+  if (reason.includes("local_document_unreadable")) return "local_document_unreadable";
+  if (reason.includes("local_document_not_file")) return "local_document_not_file";
+  if (reason.includes("local_document_too_large")) return "local_document_too_large";
+  return "send_failed";
 }
 
 function modifyPromptKey(chatId: number, messageId: number): string {

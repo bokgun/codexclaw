@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   getCodexConnectionConfig,
   getDiscordConfig,
+  getFileDeliveryConfig,
   getRuntimePathConfig,
   getTelegramConfig,
   getWikiConfig,
@@ -29,10 +30,14 @@ const ISOLATED_CODEXCLAW_ENV_KEYS = [
   "CODEXCLAW_DISCORD_INTERACTIONS_PATH",
   "CODEXCLAW_DISCORD_INTERACTIONS_PORT",
   "CODEXCLAW_DISCORD_PUBLIC_KEY",
+  "CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS",
+  "CODEXCLAW_FILE_DELIVERY_MAX_BYTES",
+  "CODEXCLAW_FILE_DELIVERY_MAX_FILES",
   "CODEXCLAW_STATE_DIR",
   "CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS",
   "CODEXCLAW_TELEGRAM_API_BASE_URL",
   "CODEXCLAW_TELEGRAM_BOT_TOKEN",
+  "CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED",
   "CODEXCLAW_WIKI_ALLOWED_SOURCE_ROOTS",
   "CODEXCLAW_WIKI_ENABLED",
   "CODEXCLAW_WIKI_MAX_EXCERPT_CHARS",
@@ -326,6 +331,53 @@ describe("Runtime path config", () => {
 
     process.env.CODEXCLAW_CODEX_WS = "wss://codex.example/ws";
     expect(getCodexConnectionConfig().wsUrl).toBe("wss://codex.example/ws");
+  });
+});
+
+describe("File delivery config", () => {
+  isolatedTest("is default-off and uses the workspace as the default allowed root", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+
+    const config = getFileDeliveryConfig();
+
+    expect(config.enabled).toBe(false);
+    expect(config.allowedRoots).toEqual([workspace]);
+    expect(config.maxFileBytes).toBeLessThan(50 * 1024 * 1024);
+    expect(config.maxFilesPerTurn).toBe(3);
+    expect(config.deniedSegments).toContain(".git");
+    expect(config.deniedRoots).toContain(stateDir);
+  });
+
+  isolatedTest("parses enabled allowed roots and bounds", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    const out = realpathSync(mkdtempSync(join(workspace, "out-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED = "true";
+    process.env.CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS = out;
+    process.env.CODEXCLAW_FILE_DELIVERY_MAX_BYTES = "1048576";
+    process.env.CODEXCLAW_FILE_DELIVERY_MAX_FILES = "2";
+
+    const config = getFileDeliveryConfig();
+
+    expect(config.enabled).toBe(true);
+    expect(config.allowedRoots).toEqual([out]);
+    expect(config.maxFileBytes).toBe(1048576);
+    expect(config.maxFilesPerTurn).toBe(2);
+  });
+
+  isolatedTest("rejects delivery roots inside state and Codex rollout paths", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS = stateDir;
+
+    expect(() => getFileDeliveryConfig()).toThrow("CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS");
   });
 });
 

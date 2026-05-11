@@ -63,6 +63,17 @@ export interface WikiConfig {
   maxExcerptChars: number;
 }
 
+export interface FileDeliveryConfig {
+  enabled: boolean;
+  allowedRoots: readonly string[];
+  deniedRoots: readonly string[];
+  deniedSegments: readonly string[];
+  maxFileBytes: number;
+  maxFilesPerTurn: number;
+  maxCandidatesPerTurn: number;
+  workspaceRoot: string;
+}
+
 export interface ThreadCapabilityConfig {
   forkThread: boolean;
   archiveThread: boolean;
@@ -258,6 +269,44 @@ export function getWikiConfig(): WikiConfig {
   };
 }
 
+export function getFileDeliveryConfig(): FileDeliveryConfig {
+  loadDotenv();
+
+  const paths = getRuntimePathConfig();
+  const enabled = parseBoolean(process.env.CODEXCLAW_TELEGRAM_FILE_DELIVERY_ENABLED);
+  const configuredRoots = parseCsv(process.env.CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS);
+  const allowedRoots = (configuredRoots.length > 0 ? configuredRoots : [paths.workspaceRoot]).map((root) =>
+    realpathDirectory(resolveAgainst(paths.workspaceRoot, root), "CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS")
+  );
+  const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE?.trim()
+    ? resolveStatePath(paths.stateDir, process.env.CODEXCLAW_CODEX_TOKEN_FILE.trim(), "codex.token")
+    : resolve(paths.stateDir, "codex.token");
+  const deniedRoots = [
+    paths.stateDir,
+    paths.dbPath,
+    tokenFile,
+    resolveHomePath("~/.codex"),
+    resolve(paths.workspaceRoot, ".git"),
+    resolve(paths.workspaceRoot, ".codex")
+  ].map((path) => normalizePath(resolveExistingPathTarget(path)));
+  for (const root of allowedRoots) {
+    if (deniedRoots.some((denied) => root === denied || root.startsWith(`${denied}/`))) {
+      throw new Error("CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS must not include codexclaw state, Codex rollout, token, db, or .git paths");
+    }
+  }
+
+  return {
+    enabled,
+    allowedRoots,
+    deniedRoots,
+    deniedSegments: [".git", ".codex", ".codexclaw"],
+    maxFileBytes: parseBoundedInteger("CODEXCLAW_FILE_DELIVERY_MAX_BYTES", 20 * 1024 * 1024, 1, 49 * 1024 * 1024),
+    maxFilesPerTurn: parseBoundedInteger("CODEXCLAW_FILE_DELIVERY_MAX_FILES", 3, 1, 10),
+    maxCandidatesPerTurn: 30,
+    workspaceRoot: paths.workspaceRoot
+  };
+}
+
 export function getThreadCapabilityConfig(): ThreadCapabilityConfig {
   return {
     forkThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_FORK),
@@ -376,6 +425,12 @@ function ensurePrivateDirectory(path: string, name: string): string {
     throw new Error(`${name} must not be group/world accessible: ${path}`);
   }
   return realpathSync(path);
+}
+
+function realpathDirectory(path: string, name: string): string {
+  const resolved = realpathSync(path);
+  if (!statSync(resolved).isDirectory()) throw new Error(`${name} must contain directories: ${path}`);
+  return normalizePath(resolved);
 }
 
 function validateWsUrl(wsUrl: string, deploymentMode: DeploymentMode): void {

@@ -40,9 +40,9 @@ workflows.
 - Exclude scheduler-originated turns from this plan. Scheduled Telegram tasks
   are unattended and may contain persisted prompts, so file delivery for
   scheduler output needs a separate task-level opt-in design.
-- Derive candidates from explicit assistant output paths first, and from
-  structured runtime metadata only if the pinned app-server exposes path
-  metadata without raw body persistence.
+- Derive candidates only from current-turn structured Codex file-change
+  metadata for successfully completed added files. Assistant text alone is not
+  trusted as a delivery source.
 - Validate paths against configured allowed roots, defaulting to
   `CODEXCLAW_WORKSPACE_ROOT`.
 - Send valid files through Telegram Bot API `sendDocument`.
@@ -140,7 +140,7 @@ workflows.
      absolutePath: string;
      displayName: string;
      sizeBytes: number;
-     source: "assistant_path" | "runtime_file_metadata";
+     source: "runtime_file_metadata";
    }
    ```
 
@@ -149,12 +149,11 @@ workflows.
 
 4. Add safe path extraction and validation service.
    - Dependencies: task 1.
-   - Add a small module for candidate extraction and validation.
-   - Extract only explicit local path references from assistant output, such as
-     absolute paths under the workspace or clearly relative paths with file
-     extensions.
-   - Ignore vague phrases, URLs, shell fragments, command substitutions, and
-     paths from user input that Codex did not produce in the turn.
+   - Add a small module for candidate validation.
+   - Accept only added-file paths from current-turn structured Codex
+     file-change metadata.
+   - Ignore assistant text paths, vague phrases, URLs, shell fragments, command
+     substitutions, user-input paths, and non-add file-change updates.
    - Normalize and realpath candidates before delivery.
    - Require existing regular files.
    - Reject directories, symlinks that escape allowed roots, files over limit,
@@ -180,7 +179,7 @@ workflows.
    interface CandidatePath {
      rawText: string;
      turnId?: TurnId;
-     source: "assistant_path" | "runtime_file_metadata";
+     source: "runtime_file_metadata";
    }
 
    interface ValidationResult {
@@ -210,12 +209,9 @@ workflows.
 5. Capture candidate paths during a turn without persistence.
    - Dependencies: tasks 2-4, `src/runtime/events.ts`,
      `src/codex/runtime-client.ts`.
-   - Add an in-memory per-turn candidate collector.
-   - Feed it assistant deltas for bound Telegram turns only when current-turn
-     delivery intent is true.
-   - Optionally feed structured file metadata from file-change items if the
-     runtime client can expose path summaries without storing raw diffs or
-     content.
+   - Add an in-memory per-turn candidate collector keyed by turn id.
+   - Feed it structured add-file metadata from successful completed file-change
+     items when current-turn delivery intent is true.
    - Clear collector state on turn completion, turn failure, disconnect
      quarantine, or host close.
    - Log only bounded counts and reason codes.
@@ -235,14 +231,8 @@ workflows.
      if no target or target.channel is not telegram:
        keep existing behavior
 
-     if event is agent_delta:
-       send delta as today
-       if current turn has delivery intent:
-         extract bounded path candidates from delta text
-         discard raw delta after candidate extraction
-
      if event is structured file metadata and current turn has delivery intent:
-       add path candidates from structured path fields only
+       add candidate paths from add-file metadata only
 
      if event is turn_completed or turn_failed:
        validate candidates for that turn
@@ -361,8 +351,7 @@ workflows.
 - Existing runtime event dispatch and `ChannelAdapterSink`.
 - Existing runtime path config and workspace root resolution.
 - Bun `fetch`, `FormData`, and file/blob support for multipart upload.
-- Pinned Codex app-server behavior from M0 for assistant deltas and optional
-  file-change metadata.
+- Pinned Codex app-server behavior from M0 for file-change metadata.
 
 ## Expected File Changes
 
@@ -387,7 +376,7 @@ workflows.
 ## Type And Interface Sketches
 
 ```ts
-type FileDeliverySource = "assistant_path" | "runtime_file_metadata";
+type FileDeliverySource = "runtime_file_metadata";
 type FileDeliveryIntent = "none" | "send_file";
 
 interface FileDeliveryConfig {
@@ -442,17 +431,18 @@ interface DocumentDeliveryOutcome {
   paths beyond raw diff/file-change events. Smallest spike: extend the existing
   `bun run spike:diff-tool` observation to record only method names and
   path-field keys, not raw diffs or content.
-- Risk: assistant output path parsing can be prompt-injected. Mitigation: treat
-  parsed paths as untrusted candidates; require current-turn delivery intent and
-  host filesystem validation under allowed roots and bounded limits.
+- Risk: assistant output path parsing can be prompt-injected. Mitigation: do not
+  use assistant text as a delivery source; require current-turn add-file
+  metadata plus host filesystem validation under allowed roots and bounded
+  limits.
 - Risk: accidentally sending secrets from workspace. Mitigation: deny known
   sensitive roots/segments, deny state/token/db/Codex rollout paths, enforce
   size/file-count limits, and document that users should not ask the bot to
   deliver secrets.
 - Risk: memory growth during long turns. Mitigation: bounded candidate count and
   bounded extraction buffer per active turn.
-- Risk: delivery duplicates when assistant repeats paths. Mitigation: dedupe by
-  realpath and cap files per turn.
+- Risk: delivery duplicates when Codex repeats file-change metadata. Mitigation:
+  dedupe by realpath and cap files per turn.
 - Risk: this expands beyond the M2 non-goal. Mitigation: frame as a later
   bounded outbound-only file delivery plan; no inbound uploads, rich media, or
   general attachment UX.
@@ -463,3 +453,4 @@ interface DocumentDeliveryOutcome {
 | --- | --- | --- | --- | --- |
 | 0 | planner | 2026-05-12 | draft | Initial read-only plan content for Telegram outbound file/document delivery. |
 | 1 | implementation-reviewer | 2026-05-12 | fixes applied | Excluded scheduled turns, made Telegram file delivery default-off with explicit env flags, and added just-in-time upload validation to close path swap risks. |
+| 2 | implementation and security reviewers | 2026-05-12 | fixes applied | Narrowed candidate provenance from assistant text to current-turn add-file metadata, keyed collector state by turn id, bounded candidate tracking, and carried file identity metadata through upload validation. |

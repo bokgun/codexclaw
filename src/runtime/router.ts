@@ -105,7 +105,6 @@ export class Router {
 
       if (!this.connected) throw new RoutingError("Codex app-server is disconnected; wait for reconnect before sending more work.", "disconnected");
       const thread = await this.threads.resolveRoutableThread(message.userKey);
-      this.options.bindThread?.(thread, message);
       if (this.queue.isBusy(thread.threadId)) {
         await this.channel.send({
           kind: "status",
@@ -116,7 +115,7 @@ export class Router {
         });
       }
 
-      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, message.text));
+      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, message.text), message);
     } catch (error) {
       await this.channel.send({
         kind: "text",
@@ -135,20 +134,21 @@ export class Router {
       }
 
       const thread = await this.threads.resolveTaskThread(input.userKey, input.label);
-      this.options.bindThread?.(thread, {
+      const scheduledMessage = {
         channel: input.channel,
         channelMessageId: `task:${input.taskId}`,
         userKey: input.userKey,
         text: input.text,
         receivedAt: new Date().toISOString(),
         channelThreadKey: input.channelThreadKey
-      });
+      };
 
       return await this.queue.enqueue(thread.threadId, async () => {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let turnId: string | undefined;
         let pendingTerminal: Extract<RuntimeEvent, { kind: "turn_completed" | "turn_failed" }> | undefined;
         try {
+          this.options.bindThread?.(thread, scheduledMessage);
           await this.threads.resumeThread(thread);
           let timedOut = false;
           let abortScheduled!: (error: Error) => void;
@@ -280,8 +280,9 @@ export class Router {
     this.queue.abortThread(threadId, reason);
   }
 
-  enqueueFollowUp(thread: ThreadRecord, text: string): Promise<void> {
+  enqueueFollowUp(thread: ThreadRecord, text: string, message?: InboundMessage): Promise<void> {
     return this.queue.enqueue(thread.threadId, async () => {
+      if (message) this.options.bindThread?.(thread, message);
       await this.threads.resumeThread(thread);
       const turnId = await this.codex.startTurn(thread.threadId, text);
       this.threads.markRouted(thread);
@@ -541,8 +542,10 @@ export class Router {
       if (!this.connected) throw new RoutingError("Codex app-server is disconnected; wait for reconnect before sending more work.", "disconnected");
       const results = await wiki.query({ userKey: message.userKey, query: parsed.query, limit: parsed.limit });
       const thread = await this.threads.resolveRoutableThread(message.userKey);
-      this.options.bindThread?.(thread, message);
-      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, attachWikiContextToText(parsed.message, results)));
+      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, attachWikiContextToText(parsed.message, results)), {
+        ...message,
+        text: parsed.message
+      });
       return;
     }
     if (action === "lint") {

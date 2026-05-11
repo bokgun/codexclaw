@@ -59,10 +59,66 @@ describe("CodexRuntimeClient thread metadata surfaces", () => {
     expect(transport.requests[0].params).toMatchObject({ archived: false, cwd: "/workspace", limit: 1 });
     expect(transport.requests[1].params).toMatchObject({ archived: true, cwd: "/workspace", limit: 1 });
   });
+
+  test("emits metadata-only file change paths for added files", async () => {
+    const transport = new MockTransport();
+    const client = new CodexRuntimeClient(transport as never);
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emitNotification({
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "fileChange",
+          id: "item-1",
+          status: "inProgress",
+          changes: [{ path: "started-only.txt", kind: { type: "add" }, diff: "ignored" }]
+        }
+      }
+    });
+    transport.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "fileChange",
+          id: "item-2",
+          status: "failed",
+          changes: [{ path: "failed.txt", kind: { type: "add" }, diff: "ignored" }]
+        }
+      }
+    });
+    transport.emitNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          type: "fileChange",
+          id: "item-1",
+          status: "completed",
+          changes: [
+            { path: "new-report.txt", kind: { type: "add" }, diff: "raw diff must not be emitted" },
+            { path: "existing.txt", kind: { type: "update", move_path: null }, diff: "ignored" }
+          ]
+        }
+      }
+    });
+
+    expect(events).toContainEqual({ kind: "file_change", threadId: "thread-1", turnId: "turn-1", paths: ["new-report.txt"] });
+    expect(JSON.stringify(events)).not.toContain("started-only.txt");
+    expect(JSON.stringify(events)).not.toContain("failed.txt");
+    expect(JSON.stringify(events)).not.toContain("raw diff must not be emitted");
+  });
 });
 
 class MockTransport {
   requests: Array<{ method: string; params: unknown }> = [];
+  notificationHandlers: Array<(notification: { method: string; params?: unknown }) => void> = [];
 
   async request(method: string, params: unknown): Promise<unknown> {
     this.requests.push({ method, params });
@@ -76,12 +132,18 @@ class MockTransport {
     return {};
   }
 
-  onNotification(): void {}
+  onNotification(handler: (notification: { method: string; params?: unknown }) => void): void {
+    this.notificationHandlers.push(handler);
+  }
   onServerRequest(): void {}
   onClose(): () => void {
     return () => undefined;
   }
   close(): void {}
+
+  emitNotification(notification: { method: string; params?: unknown }): void {
+    for (const handler of this.notificationHandlers) handler(notification);
+  }
 }
 
 function readThreadId(params: unknown): string {
