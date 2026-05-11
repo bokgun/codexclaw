@@ -18,7 +18,7 @@ used during the smoke run.
   container --version
   ```
 
-- [ ] Record:
+- [x] Record:
   - macOS version
   - Apple Container version
   - CPU architecture
@@ -83,73 +83,73 @@ used during the smoke run.
 
 ## 4. Mount And Secret Boundary
 
-- [ ] Mount only `CODEXCLAW_WORKSPACE_ROOT` read-write at the same absolute path
+- [x] Mount only `CODEXCLAW_WORKSPACE_ROOT` read-write at the same absolute path
   inside the runtime.
-- [ ] Provide `CODEXCLAW_CODEX_TOKEN_FILE` as a read-only single-file mount or
-  runtime secret.
-- [ ] Keep `CODEXCLAW_STATE_DIR` outside the Apple Container runtime.
-- [ ] Keep `CODEXCLAW_DB` outside the Apple Container runtime.
-- [ ] Do not mount broad host paths such as `$HOME`, `~/.ssh`, cloud credential
+- [x] Provide `CODEXCLAW_CODEX_TOKEN_FILE` through a read-only token staging
+  mount or runtime secret.
+- [x] Keep `CODEXCLAW_STATE_DIR` outside the Apple Container runtime.
+- [x] Keep `CODEXCLAW_DB` outside the Apple Container runtime.
+- [x] Do not mount broad host paths such as `$HOME`, `~/.ssh`, cloud credential
   directories, shell histories, Docker sockets, SSH agents, or unrelated host
   secrets.
-- [ ] Confirm Apple Container inspect output or equivalent runtime metadata shows
+- [x] Confirm Apple Container inspect output or equivalent runtime metadata shows
   only the intended workspace mount, token mount/secret, and isolated Codex auth
   storage.
 
 ## 5. Codex Authentication Boundary
 
-- [ ] Initialize Codex CLI authentication inside Apple Container-owned isolated
+- [x] Initialize Codex CLI authentication inside Apple Container-owned isolated
   auth storage.
 
   ```sh
   scripts/apple-container-codex.sh login
   ```
-- [ ] Do not satisfy authentication by mounting the operator's whole host home
+- [x] Do not satisfy authentication by mounting the operator's whole host home
   directory.
-- [ ] If a read-only Codex auth config mount is used, confirm it contains only
-  Codex CLI authentication material and no unrelated credentials.
-- [ ] Record the exact authentication initialization command used.
+- [x] Confirm Codex auth is stored in the isolated Apple Container auth volume,
+  not a host auth config mount.
+- [x] Record the exact authentication initialization command used.
 
 ## 6. Runtime Smoke
 
-- [ ] Start `codex app-server` inside Apple Container.
+- [x] Start `codex app-server` inside Apple Container.
 
   ```sh
   scripts/apple-container-codex.sh up
   ```
-- [ ] Confirm plaintext app-server access is loopback-only or internal to the
+- [x] Confirm plaintext app-server access is loopback-only or internal to the
   runtime namespace. Do not expose `ws://` on all host interfaces.
-- [ ] Check readiness from the host:
+- [x] Check readiness from the host:
 
   ```sh
   curl -fsS http://127.0.0.1:4500/readyz
   ```
 
-- [ ] Confirm the runtime user can write to the mounted workspace:
+- [x] Confirm the runtime user can write to the mounted workspace:
 
   ```sh
   scripts/apple-container-codex.sh run sh -lc 'id && which bwrap && touch .codexclaw-apple-container-write-test && rm .codexclaw-apple-container-write-test'
   ```
 
-- [ ] Prefer a runtime-internal write probe when Apple Container supports
+- [x] Prefer a runtime-internal write probe when Apple Container supports
   executing a shell in the app-server runtime. The probe must create and remove
   a file inside `CODEXCLAW_WORKSPACE_ROOT` as the same user that runs Codex.
 
 ## 7. Host codexclaw Smoke
 
-- [ ] Configure host codexclaw to use the Apple Container app-server endpoint:
+- [x] Configure host codexclaw to use the Apple Container app-server endpoint:
 
   ```sh
   export CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500
   ```
 
-- [ ] Start the CLI:
+- [x] Start the CLI:
 
   ```sh
   bun run cli
   ```
 
-- [ ] Run:
+- [x] Run:
 
   ```text
   /thread list
@@ -157,25 +157,52 @@ used during the smoke run.
   /quit
   ```
 
-- [ ] Confirm `/thread list` returns known pointers or a clear empty-state
+- [x] Confirm `/thread list` returns known pointers or a clear empty-state
   message.
-- [ ] Confirm `/skills list` shows Codex skills and host capabilities without
+- [x] Confirm `/skills list` shows Codex skills and host capabilities without
   leaking private absolute paths or dependency details.
 - [ ] Optionally run one minimal prompt smoke in a disposable workspace and
   confirm Codex can edit only the intended workspace.
 
 ## 8. Release Record
 
-- [ ] Record all final Apple Container commands used for build, run, inspect,
+- [x] Record all final Apple Container commands used for build, run, inspect,
   authentication, readiness, and cleanup.
-- [ ] Record Apple Container inspect output or an equivalent mount/network
+
+  ```sh
+  container --version
+  sw_vers
+  uname -m
+  bun run schema:verify
+  bun run typecheck
+  bun test
+  scripts/apple-container-codex.sh build
+  scripts/apple-container-codex.sh login
+  scripts/apple-container-codex.sh run sh -lc 'id && which bwrap && test -r /run/secrets/codex.token && test -d /home/codex/.codex && touch .codexclaw-apple-container-write-test && rm .codexclaw-apple-container-write-test'
+  scripts/apple-container-codex.sh up
+  scripts/apple-container-codex.sh inspect
+  scripts/apple-container-codex.sh logs
+  curl -fsS http://127.0.0.1:4500/readyz
+  CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500 bun run cli
+  scripts/apple-container-codex.sh down
+  ```
+- [x] Record Apple Container inspect output or an equivalent mount/network
   summary.
-- [ ] Record whether Apple Container support is:
-  - `smoke_verified`, if every required checklist item passed
-  - `documented_only`, if any required item was skipped or unavailable
-- [ ] Stop and remove the Apple Container runtime unit.
+
+  ```text
+  workspace: /Users/bokgun/TempWorkspace/codexclaw -> same path, read-write
+  token: /Users/bokgun/TempWorkspace/codexclaw-state/apple-container-token -> /run/secrets, read-only
+  auth: codexclaw-codex-app-server-home -> /home/codex/.codex, Apple Container volume
+  publish: 127.0.0.1:4500 -> 4500/tcp
+  no broad host home, SSH agent, cloud credential directory, Docker socket, codexclaw state dir, or SQLite mount
+  ```
+- [x] Record whether Apple Container support is:
+  - `smoke_verified`, because required build, auth, mount, readiness, CLI
+    `/thread list`, CLI `/skills list`, and CLI `/quit` smoke passed
+  - optional minimal prompt smoke remains unrun
+- [x] Stop and remove the Apple Container runtime unit.
 
   ```sh
   scripts/apple-container-codex.sh down
   ```
-- [ ] Confirm the disposable workspace contains only expected files.
+- [x] Confirm the disposable workspace contains only expected files.
