@@ -114,11 +114,117 @@ describe("CodexRuntimeClient thread metadata surfaces", () => {
     expect(JSON.stringify(events)).not.toContain("failed.txt");
     expect(JSON.stringify(events)).not.toContain("raw diff must not be emitted");
   });
+
+  test("wraps MCP reload and status list methods", async () => {
+    const transport = new MockTransport();
+    const client = new CodexRuntimeClient(transport as never);
+
+    await client.reloadMcpServers();
+    const status = await client.listMcpServerStatus({ detail: "toolsAndAuthOnly", limit: 5 });
+
+    expect(status).toEqual({ data: [{ name: "toy", tools: {}, resources: [], resourceTemplates: [], authStatus: null }], nextCursor: null });
+    expect(transport.requests.slice(-2)).toEqual([
+      { method: CODEX_METHODS.mcpServerReload, params: undefined },
+      { method: CODEX_METHODS.mcpServerStatusList, params: { detail: "toolsAndAuthOnly", limit: 5 } }
+    ]);
+  });
+
+  test("emits MCP startup status as bounded metadata", async () => {
+    const transport = new MockTransport();
+    const client = new CodexRuntimeClient(transport as never);
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emitNotification({
+      method: CODEX_METHODS.mcpServerStartupStatusUpdated,
+      params: {
+        name: "toy",
+        status: "failed",
+        error: `${"x".repeat(200)} OPENAI_API_KEY=sk-1234567890abcdefghijkl raw secret that must be truncated`
+      }
+    });
+
+    expect(events).toEqual([
+      {
+        kind: "mcp_server_startup_status",
+        serverName: "toy",
+        startupState: "failed",
+        errorSummary: "x".repeat(160)
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("raw secret");
+    expect(JSON.stringify(events)).not.toContain("sk-1234567890abcdefghijkl");
+  });
+
+  test("declines MCP elicitation requests without emitting raw request content", async () => {
+    const transport = new MockTransport();
+    const client = new CodexRuntimeClient(transport as never);
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emitServerRequest({
+      id: "elicitation-1",
+      method: CODEX_METHODS.mcpServerElicitationRequest,
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        serverName: "toy",
+        mode: "form",
+        message: "raw prompt must not be emitted",
+        requestedSchema: { type: "object", properties: { secret: { type: "string", description: "raw schema" } } },
+        _meta: { secret: "raw meta" }
+      }
+    });
+
+    expect(transport.responses).toEqual([
+      { id: "elicitation-1", result: { action: "decline", content: null, _meta: null } }
+    ]);
+    expect(events).toEqual([
+      {
+        kind: "mcp_server_request_failed_closed",
+        method: CODEX_METHODS.mcpServerElicitationRequest
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("raw prompt");
+    expect(JSON.stringify(events)).not.toContain("raw schema");
+    expect(JSON.stringify(events)).not.toContain("raw meta");
+  });
+
+  test("fails closed for unsupported MCP server requests without raw params", async () => {
+    const transport = new MockTransport();
+    const client = new CodexRuntimeClient(transport as never);
+    const events: unknown[] = [];
+    client.onEvent((event) => events.push(event));
+
+    transport.emitServerRequest({
+      id: 7,
+      method: "mcpServer/custom/request",
+      params: {
+        threadId: "thread-1",
+        serverName: "toy",
+        payload: "raw payload must not be emitted"
+      }
+    });
+
+    expect(transport.errors).toEqual([
+      { id: 7, error: { code: -32601, message: "Unsupported MCP server request method" } }
+    ]);
+    expect(events).toEqual([
+      {
+        kind: "mcp_server_request_failed_closed",
+        method: "mcpServer/custom/request"
+      }
+    ]);
+    expect(JSON.stringify(events)).not.toContain("raw payload");
+  });
 });
 
 class MockTransport {
   requests: Array<{ method: string; params: unknown }> = [];
+  responses: Array<{ id: number | string; result: unknown }> = [];
+  errors: Array<{ id: number | string; error: unknown }> = [];
   notificationHandlers: Array<(notification: { method: string; params?: unknown }) => void> = [];
+  serverRequestHandlers: Array<(request: { id: number | string; method: string; params?: unknown }) => void> = [];
 
   async request(method: string, params: unknown): Promise<unknown> {
     this.requests.push({ method, params });
@@ -129,20 +235,35 @@ class MockTransport {
       throw new Error("thread not found");
     }
     if (method === CODEX_METHODS.threadRead) return { thread: { id: "thread-1", cwd: "/workspace", status: "active", turns: [] } };
+    if (method === CODEX_METHODS.mcpServerStatusList) {
+      return { data: [{ name: "toy", tools: {}, resources: [], resourceTemplates: [], authStatus: null }], nextCursor: null };
+    }
     return {};
   }
 
   onNotification(handler: (notification: { method: string; params?: unknown }) => void): void {
     this.notificationHandlers.push(handler);
   }
-  onServerRequest(): void {}
+  onServerRequest(handler: (request: { id: number | string; method: string; params?: unknown }) => void): void {
+    this.serverRequestHandlers.push(handler);
+  }
   onClose(): () => void {
     return () => undefined;
   }
   close(): void {}
+  respond(id: number | string, result: unknown): void {
+    this.responses.push({ id, result });
+  }
+  respondError(id: number | string, error: unknown): void {
+    this.errors.push({ id, error });
+  }
 
   emitNotification(notification: { method: string; params?: unknown }): void {
     for (const handler of this.notificationHandlers) handler(notification);
+  }
+
+  emitServerRequest(request: { id: number | string; method: string; params?: unknown }): void {
+    for (const handler of this.serverRequestHandlers) handler(request);
   }
 }
 

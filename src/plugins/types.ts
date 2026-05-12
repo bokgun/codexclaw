@@ -165,3 +165,34 @@ export interface PluginProjectionOmission {
   reason: "disabled" | "invalid" | "duplicate" | "version_mismatch" | "missing_env";
   missingEnvNames: readonly string[];
 }
+
+export type PluginSupervisorState = "disabled" | "starting" | "ready" | "failed" | "backing_off" | "stopped";
+
+export interface PluginSupervisorConfig {
+  startupTimeoutMs: number;
+  backoffBaseMs: number;
+  backoffMaxMs: number;
+  maxRestartAttempts: number;
+  diagnosticMaxChars: number;
+}
+
+export interface SupervisedPluginStatus {
+  pluginId: string;
+  version?: string;
+  serverName: string;
+  sourceLabel: string;
+  desired: "running" | "stopped";
+  state: PluginSupervisorState;
+  restartCount: number;
+  lastTransitionAt: string;
+  lastErrorSummary?: string;
+  missingEnvNames: readonly string[];
+}
+
+export interface AppServerMcpStatusSummary {
+  serverName: string;
+  startupState?: "starting" | "ready" | "failed" | "cancelled" | "unknown";
+  toolCount?: number;
+  resourceCount?: number;
+  errorSummary?: string;
+}

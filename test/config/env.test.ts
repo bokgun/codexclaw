@@ -7,6 +7,7 @@ import {
   getDiscordConfig,
   getFileDeliveryConfig,
   getPluginConfig,
+  getPluginSupervisorEnvConfig,
   getRuntimePathConfig,
   getTelegramConfig,
   getWikiConfig,
@@ -36,6 +37,13 @@ const ISOLATED_CODEXCLAW_ENV_KEYS = [
   "CODEXCLAW_FILE_DELIVERY_MAX_FILES",
   "CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES",
   "CODEXCLAW_PLUGIN_DIRS",
+  "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME",
+  "CODEXCLAW_PLUGIN_SUPERVISION_ENABLED",
+  "CODEXCLAW_PLUGIN_SUPERVISOR_BACKOFF_BASE_MS",
+  "CODEXCLAW_PLUGIN_SUPERVISOR_BACKOFF_MAX_MS",
+  "CODEXCLAW_PLUGIN_SUPERVISOR_DIAGNOSTIC_MAX_CHARS",
+  "CODEXCLAW_PLUGIN_SUPERVISOR_MAX_RESTART_ATTEMPTS",
+  "CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS",
   "CODEXCLAW_STATE_DIR",
   "CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS",
   "CODEXCLAW_TELEGRAM_API_BASE_URL",
@@ -412,6 +420,50 @@ describe("Plugin config", () => {
     process.env.CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES = "0";
 
     expect(() => getPluginConfig()).toThrow("CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES");
+  });
+
+  isolatedTest("parses managed plugin supervisor config inside state", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED = "true";
+    process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME = "managed-codex";
+    process.env.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS = "500";
+
+    const config = getPluginSupervisorEnvConfig();
+
+    expect(config.enabled).toBe(true);
+    expect(config.managedCodexHome).toBe(join(stateDir, "managed-codex"));
+    expect(config.managedConfigPath).toBe(join(stateDir, "managed-codex/config.toml"));
+    expect(config.startupTimeoutMs).toBe(500);
+  });
+
+  isolatedTest("rejects managed plugin supervisor config outside state", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-outside-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED = "true";
+    process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME = outside;
+
+    expect(() => getPluginSupervisorEnvConfig()).toThrow("CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME must stay inside CODEXCLAW_STATE_DIR");
+  });
+
+  isolatedTest("ignores managed plugin supervisor override while disabled", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-outside-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED = "false";
+    process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME = outside;
+
+    const config = getPluginSupervisorEnvConfig();
+
+    expect(config.enabled).toBe(false);
+    expect(config.managedCodexHome).toBe(join(stateDir, "codex-home"));
   });
 });
 

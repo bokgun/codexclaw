@@ -50,6 +50,43 @@ describe("HostRuntime", () => {
     ]);
     expect(methods.slice(6, turnStartIndex)).toEqual(["thread/read", "thread/list", "thread/list"]);
   });
+
+  test("does not block startup routing on slow plugin reconciliation", async () => {
+    const env = withRuntimeEnv({
+      CODEXCLAW_PLUGIN_SUPERVISION_ENABLED: "true",
+      CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS: "100"
+    });
+    const store = createPointerStore();
+    const transport = new FakeTransport({ slowMcpReload: true });
+    const channel = new SingleMessageChannel({
+      id: "msg-1",
+      userKey: "user:1",
+      channel: "cli",
+      text: "hello",
+      receivedAt: "2026-05-07T00:00:00.000Z"
+    });
+    const runtime = new HostRuntime({
+      channel,
+      store,
+      logger: noopLogger,
+      scheduler: false,
+      wiki: false,
+      connectTransport: async () => transport as never
+    });
+
+    try {
+      await runtime.start();
+    } finally {
+      runtime.close();
+      store.close();
+      env.restore();
+    }
+
+    const methods = transport.requests.map((request) => request.method);
+    expect(methods).toContain("config/mcpServer/reload");
+    expect(methods).toContain("turn/start");
+    expect(methods.indexOf("turn/start")).toBeGreaterThan(methods.indexOf("config/mcpServer/reload"));
+  });
 });
 
 class FakeTransport {
@@ -59,8 +96,15 @@ class FakeTransport {
   private serverRequestHandlers = new Set<(request: RpcServerRequest) => void>();
   private closeHandlers = new Set<(error?: Error) => void>();
 
+  constructor(private readonly options: { slowMcpReload?: boolean } = {}) {}
+
   async request(method: string, params?: JsonValue): Promise<JsonValue> {
     this.requests.push({ method, params });
+    if (method === "config/mcpServer/reload") {
+      if (this.options.slowMcpReload) return new Promise(() => {});
+      return {};
+    }
+    if (method === "mcpServerStatus/list") return { data: [], nextCursor: null };
     if (method === "thread/list") {
       const archived = Boolean(params && typeof params === "object" && !Array.isArray(params) && params.archived);
       return {
@@ -141,24 +185,34 @@ async function* single<T>(value: T): AsyncIterable<T> {
 
 async function* empty<T>(): AsyncIterable<T> {}
 
-function withRuntimeEnv(): { restore(): void } {
+function withRuntimeEnv(extra: Record<string, string> = {}): { restore(): void } {
   const previous = {
     CODEXCLAW_WORKSPACE_ROOT: process.env.CODEXCLAW_WORKSPACE_ROOT,
     CODEXCLAW_STATE_DIR: process.env.CODEXCLAW_STATE_DIR,
     CODEXCLAW_DEPLOYMENT_MODE: process.env.CODEXCLAW_DEPLOYMENT_MODE,
-    CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE: process.env.CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE
+    CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE: process.env.CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE,
+    CODEXCLAW_PLUGIN_SUPERVISION_ENABLED: process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED,
+    CODEXCLAW_PLUGIN_DIRS: process.env.CODEXCLAW_PLUGIN_DIRS,
+    CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME: process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME,
+    CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS: process.env.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS
   };
   const root = mkdtempSync(join(tmpdir(), "codexclaw-host-test-"));
   process.env.CODEXCLAW_WORKSPACE_ROOT = join(root, "workspace");
   process.env.CODEXCLAW_STATE_DIR = join(root, "state");
   process.env.CODEXCLAW_DEPLOYMENT_MODE = "local_loopback";
   process.env.CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE = "false";
+  process.env.CODEXCLAW_PLUGIN_DIRS = "";
+  for (const [key, value] of Object.entries(extra)) process.env[key] = value;
   return {
     restore() {
       restoreEnv("CODEXCLAW_WORKSPACE_ROOT", previous.CODEXCLAW_WORKSPACE_ROOT);
       restoreEnv("CODEXCLAW_STATE_DIR", previous.CODEXCLAW_STATE_DIR);
       restoreEnv("CODEXCLAW_DEPLOYMENT_MODE", previous.CODEXCLAW_DEPLOYMENT_MODE);
       restoreEnv("CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE", previous.CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE);
+      restoreEnv("CODEXCLAW_PLUGIN_SUPERVISION_ENABLED", previous.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED);
+      restoreEnv("CODEXCLAW_PLUGIN_DIRS", previous.CODEXCLAW_PLUGIN_DIRS);
+      restoreEnv("CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME", previous.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME);
+      restoreEnv("CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS", previous.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS);
     }
   };
 }

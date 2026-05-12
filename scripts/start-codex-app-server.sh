@@ -17,7 +17,7 @@ load_dotenv() {
     value="${value%"${value##*[![:space:]]}"}"
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
     case "$key" in
-      CODEXCLAW_PORT|CODEXCLAW_DEPLOYMENT_MODE|CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE|CODEXCLAW_WORKSPACE_ROOT|CODEXCLAW_STATE_DIR|CODEXCLAW_CODEX_TOKEN_FILE|CODEXCLAW_CODEX_WS|CODEXCLAW_CODEX_LISTEN) ;;
+      CODEXCLAW_PORT|CODEXCLAW_DEPLOYMENT_MODE|CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE|CODEXCLAW_WORKSPACE_ROOT|CODEXCLAW_STATE_DIR|CODEXCLAW_CODEX_TOKEN_FILE|CODEXCLAW_CODEX_WS|CODEXCLAW_CODEX_LISTEN|CODEXCLAW_PLUGIN_SUPERVISION_ENABLED|CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME) ;;
       *) continue ;;
     esac
     [[ -z "${!key+x}" ]] || continue
@@ -123,6 +123,32 @@ scrub_codexclaw_env_for_app_server() {
   done
 }
 
+is_truthy() {
+  case "$1" in
+    1|true|TRUE|True|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+exec_app_server() {
+  local -a env_args=()
+  local key
+  for key in PATH HOME TMPDIR TEMP TMP USER LOGNAME SHELL TERM LANG LC_ALL; do
+    if [[ -n "${!key+x}" && -n "${!key}" ]]; then
+      env_args+=("$key=${!key}")
+    fi
+  done
+  if [[ -n "${MANAGED_CODEX_HOME:-}" ]]; then
+    env_args+=("CODEX_HOME=$MANAGED_CODEX_HOME")
+  elif [[ -n "${CODEX_HOME:-}" ]]; then
+    env_args+=("CODEX_HOME=$CODEX_HOME")
+  fi
+  exec env -i "${env_args[@]}" codex app-server \
+    --listen "$LISTEN_URL" \
+    --ws-auth capability-token \
+    --ws-token-file "$TOKEN_FILE"
+}
+
 load_dotenv ".env"
 
 PORT="${CODEXCLAW_PORT:-4500}"
@@ -194,10 +220,35 @@ chmod go-rwx "$TOKEN_FILE"
 
 TOKEN_FILE="$(cd "$(dirname "$TOKEN_FILE")" && pwd)/$(basename "$TOKEN_FILE")"
 
+PLUGIN_SUPERVISION_ENABLED="${CODEXCLAW_PLUGIN_SUPERVISION_ENABLED:-false}"
+if is_truthy "$PLUGIN_SUPERVISION_ENABLED"; then
+  MANAGED_CODEX_HOME="$(expand_home "${CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME:-$STATE_DIR/codex-home}")"
+  if [[ "$MANAGED_CODEX_HOME" != /* ]]; then
+    MANAGED_CODEX_HOME="$STATE_DIR/$MANAGED_CODEX_HOME"
+  fi
+  if [[ -L "$MANAGED_CODEX_HOME" ]]; then
+    echo "Refusing symlink CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME: $MANAGED_CODEX_HOME" >&2
+    exit 1
+  fi
+  if [[ "$(realpath_for_policy "$MANAGED_CODEX_HOME")" != "$STATE_DIR" && "$(realpath_for_policy "$MANAGED_CODEX_HOME")" != "$STATE_DIR/"* ]]; then
+    echo "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME must stay inside CODEXCLAW_STATE_DIR" >&2
+    exit 1
+  fi
+  mkdir -p "$MANAGED_CODEX_HOME"
+  chmod go-rwx "$MANAGED_CODEX_HOME"
+  MANAGED_CODEX_HOME="$(cd "$MANAGED_CODEX_HOME" && pwd -P)"
+  if [[ -L "$MANAGED_CODEX_HOME/auth.json" ]]; then
+    echo "Refusing symlink managed CODEX_HOME auth.json: $MANAGED_CODEX_HOME/auth.json" >&2
+    exit 1
+  fi
+  if [[ ! -f "$MANAGED_CODEX_HOME/auth.json" ]]; then
+    echo "CODEXCLAW_PLUGIN_SUPERVISION_ENABLED requires an authenticated managed CODEX_HOME. Run: CODEX_HOME=\"$MANAGED_CODEX_HOME\" codex login --device-auth" >&2
+    exit 1
+  fi
+  chmod go-rwx "$MANAGED_CODEX_HOME/auth.json"
+fi
+
 cd "$WORKSPACE_ROOT"
 scrub_codexclaw_env_for_app_server
 
-exec codex app-server \
-  --listen "$LISTEN_URL" \
-  --ws-auth capability-token \
-  --ws-token-file "$TOKEN_FILE"
+exec_app_server

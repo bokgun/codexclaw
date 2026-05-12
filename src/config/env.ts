@@ -87,6 +87,17 @@ export interface PluginConfig {
   deniedRoots: readonly string[];
 }
 
+export interface PluginSupervisorEnvConfig {
+  enabled: boolean;
+  managedCodexHome: string;
+  managedConfigPath: string;
+  startupTimeoutMs: number;
+  backoffBaseMs: number;
+  backoffMaxMs: number;
+  maxRestartAttempts: number;
+  diagnosticMaxChars: number;
+}
+
 export function loadDotenv(path = ".env"): void {
   if (!existsSync(path)) return;
 
@@ -357,6 +368,35 @@ export function getPluginConfig(): PluginConfig {
   };
 }
 
+export function getPluginSupervisorEnvConfig(): PluginSupervisorEnvConfig {
+  loadDotenv();
+
+  const paths = getRuntimePathConfig();
+  const enabled = parseBoolean(process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED);
+  const managedCodexHome = resolveStatePath(
+    paths.stateDir,
+    enabled ? process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME?.trim() || "codex-home" : "codex-home",
+    "codex-home"
+  );
+  if (enabled) {
+    validateWorkspaceBoundary(managedCodexHome, "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME", paths);
+    validateStateOwnedPath(managedCodexHome, "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME", paths);
+    refuseSymlinkPath(managedCodexHome, "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME");
+  }
+  const managedConfigPath = resolve(managedCodexHome, "config.toml");
+
+  return {
+    enabled,
+    managedCodexHome,
+    managedConfigPath,
+    startupTimeoutMs: parseBoundedInteger("CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS", 1_500, 100, 30_000),
+    backoffBaseMs: parseBoundedInteger("CODEXCLAW_PLUGIN_SUPERVISOR_BACKOFF_BASE_MS", 250, 50, 30_000),
+    backoffMaxMs: parseBoundedInteger("CODEXCLAW_PLUGIN_SUPERVISOR_BACKOFF_MAX_MS", 5_000, 100, 300_000),
+    maxRestartAttempts: parseBoundedInteger("CODEXCLAW_PLUGIN_SUPERVISOR_MAX_RESTART_ATTEMPTS", 3, 0, 50),
+    diagnosticMaxChars: parseBoundedInteger("CODEXCLAW_PLUGIN_SUPERVISOR_DIAGNOSTIC_MAX_CHARS", 240, 40, 2_000)
+  };
+}
+
 export function redactTelegramSecrets(value: string, botToken = process.env.CODEXCLAW_TELEGRAM_BOT_TOKEN): string {
   let redacted = value;
   if (botToken) redacted = redacted.split(botToken).join("[telegram-bot-token]");
@@ -503,7 +543,7 @@ function parseDeploymentMode(value: string | undefined): DeploymentMode {
 
 function validateWorkspaceBoundary(
   path: string,
-  name: "CODEXCLAW_STATE_DIR" | "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB",
+  name: "CODEXCLAW_STATE_DIR" | "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB" | "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME",
   config: Pick<RuntimePathConfig, "workspaceRoot" | "deploymentMode" | "allowWorkspaceInternalState">
 ): void {
   const insideWorkspace = isInsideWorkspace(path, config.workspaceRoot);
@@ -517,7 +557,7 @@ function validateWorkspaceBoundary(
 
 function validateStateOwnedPath(
   path: string,
-  name: "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB",
+  name: "CODEXCLAW_CODEX_TOKEN_FILE" | "CODEXCLAW_DB" | "CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME",
   config: Pick<RuntimePathConfig, "stateDir" | "deploymentMode" | "allowWorkspaceInternalState">
 ): void {
   if (isInsideDirectory(path, config.stateDir)) return;

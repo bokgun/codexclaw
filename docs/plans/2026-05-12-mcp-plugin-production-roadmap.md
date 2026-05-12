@@ -142,6 +142,13 @@ Implemented in:
 Goal: supervise local MCP plugin server processes with clear lifecycle and
 bounded diagnostics.
 
+Status: implemented as app-server-managed supervision. codexclaw projects
+validated enabled plugins into a private managed app-server MCP config, requests
+app-server reload/status, observes metadata-only lifecycle events, and keeps
+core channel routing non-blocking when plugin startup fails or stalls. The
+managed app-server `CODEX_HOME` must be authenticated explicitly; codexclaw does
+not copy Codex auth from a user's global home.
+
 Scope:
 
 - start/stop lifecycle for enabled local plugin MCP servers;
@@ -160,10 +167,23 @@ Non-goals:
 
 Exit criteria:
 
-- codexclaw can start, stop, and restart a local MCP plugin server;
+- codexclaw can start, stop, and restart a local MCP plugin server through
+  app-server MCP reload/status coordination;
 - supervision status contains no secrets or raw tool payloads;
 - failed plugin startup does not prevent core channel routing;
 - app-server reload only sees validated enabled descriptors.
+
+Implemented in:
+
+- `src/codex/runtime-client.ts`;
+- `src/plugins/supervisor.ts`;
+- `src/runtime/host.ts`;
+- `src/config/env.ts`;
+- `scripts/start-codex-app-server.sh`;
+- `test/codex/runtime-client.test.ts`;
+- `test/plugins/plugin-supervisor.test.ts`;
+- `test/runtime/host.test.ts`;
+- `test/config/env.test.ts`.
 
 ### M5d - Channel UX
 

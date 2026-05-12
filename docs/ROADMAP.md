@@ -276,6 +276,11 @@ Planned sequence:
 - M5e OpenCandle production plugin slice.
 - M5f hardening and release documentation.
 
+M5c is implemented as app-server-managed supervision: codexclaw writes a
+private managed MCP config under codexclaw state, requests app-server
+reload/status, observes metadata-only lifecycle status, and does not directly
+spawn plugin commands.
+
 Non-goals:
 
 - plugin marketplace or remote plugin downloads;
@@ -290,7 +295,7 @@ Exit criteria:
 - Validated enabled plugin descriptors can be projected into app-server MCP
   config.
 - codexclaw can supervise local MCP plugin server processes with bounded,
-  redacted lifecycle status.
+  redacted lifecycle status through app-server reload/status coordination.
 - Telegram, Discord, and CLI users can inspect plugin status and enable or
   disable plugins with network/provider warnings.
 - OpenCandle is available as a first production-style local MCP plugin slice.

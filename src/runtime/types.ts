@@ -178,6 +178,13 @@ export type RuntimeEvent =
   | { kind: "file_change"; threadId?: ThreadId; turnId?: TurnId; paths: readonly string[] }
   | { kind: "tool_event"; threadId?: ThreadId; turnId?: TurnId; itemId?: string; status?: string }
   | { kind: "approval_requested"; requestId: number | string; method: string; params: JsonValue }
+  | {
+      kind: "mcp_server_startup_status";
+      serverName: string;
+      startupState?: "starting" | "ready" | "failed" | "cancelled" | "unknown";
+      errorSummary?: string;
+    }
+  | { kind: "mcp_server_request_failed_closed"; method: string }
   | { kind: "skills_changed" }
   | { kind: "unknown"; method: string; params?: JsonValue };
 

@@ -7,11 +7,14 @@ import { CodexWsClient } from "../codex/ws-client.js";
 import {
   getCodexConnectionConfig,
   getFileDeliveryConfig,
+  getPluginConfig,
+  getPluginSupervisorEnvConfig,
   getRuntimePathConfig,
   getSchedulerConfig,
   getThreadCapabilityConfig,
   getWikiConfig
 } from "../config/env.js";
+import { PluginSupervisor } from "../plugins/index.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { createSkillInspectionService } from "../skills/index.js";
 import { ThreadManager } from "../thread/thread-manager.js";
@@ -55,6 +58,7 @@ export class HostRuntime {
   private readonly threadTargets = new Map<string, { userKey: UserKey; channel: ChannelName; channelThreadKey?: string }>();
   private branchSuggestions?: BranchSuggestionCoordinator;
   private scheduler?: SchedulerCoordinator;
+  private pluginSupervisor?: PluginSupervisor;
   private approvalExpiry?: ReturnType<typeof setInterval>;
   private reconnecting = false;
   private stopping = false;
@@ -79,6 +83,7 @@ export class HostRuntime {
     await this.syncKnownThreads();
     await this.resumeKnownActiveThreads();
     this.router.setConnected(true);
+    this.reconcilePlugins("startup");
     this.startScheduler();
     this.approvalExpiry = setInterval(() => this.approvals.expirePending(), 5_000);
 
@@ -89,6 +94,7 @@ export class HostRuntime {
   }
 
   private installCodexClient(transport: CodexWsClient, options: { connected?: boolean } = {}): void {
+    this.pluginSupervisor?.close();
     this.codex = new CodexRuntimeClient(transport, { capabilities: getThreadCapabilityConfig() });
     const sink = new ChannelAdapterSink(this.channel);
     this.sink = sink;
@@ -154,8 +160,16 @@ export class HostRuntime {
       this.branchSuggestionOptions === false
         ? undefined
         : new BranchSuggestionCoordinator(this.store, sink, this.branchSuggestionOptions);
+    this.pluginSupervisor = new PluginSupervisor({
+      pluginConfig: getPluginConfig(),
+      supervisorConfig: getPluginSupervisorEnvConfig(),
+      store: this.store,
+      codex: this.codex,
+      logger: this.logger
+    });
 
     this.codex.onEvent((event) => {
+      this.pluginSupervisor?.handleRuntimeEvent(event);
       this.router.handleRuntimeEvent(event);
       void this.approvals.handleRuntimeEvent(event);
       void dispatcher.dispatch(event);
@@ -178,6 +192,7 @@ export class HostRuntime {
   close(): void {
     this.stopping = true;
     this.scheduler?.stop();
+    this.pluginSupervisor?.close();
     if (this.approvalExpiry) clearInterval(this.approvalExpiry);
     this.codex?.close();
     this.store.close();
@@ -248,6 +263,7 @@ export class HostRuntime {
         await this.resumeKnownActiveThreads();
         if (this.stopping) break;
         this.router.setConnected(true);
+        this.reconcilePlugins("reconnect");
         this.startScheduler();
         this.logger.info("codex_reconnected");
         this.reconnecting = false;
@@ -320,6 +336,16 @@ export class HostRuntime {
 
   private connectTransport(): Promise<CodexWsClient> {
     return this.hostOptions.connectTransport ? this.hostOptions.connectTransport() : connectTransport();
+  }
+
+  private reconcilePlugins(reason: "startup" | "reconnect"): void {
+    try {
+      this.pluginSupervisor?.reconcile(reason);
+    } catch (error) {
+      this.logger.warn("plugin_supervisor_start_failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
 

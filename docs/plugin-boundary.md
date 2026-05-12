@@ -77,6 +77,22 @@ identity plus timestamps, and builds an in-memory app-server MCP config
 projection for enabled descriptors whose required env names are present. Env
 values are projected only from allowlisted names and are not written to SQLite.
 
+M5c adds app-server-managed process supervision. codexclaw writes a
+state-owned managed `CODEX_HOME/config.toml` containing only validated enabled
+MCP server entries, asks app-server to reload MCP config, observes reload/status
+and startup-status metadata, and keeps channel routing independent from plugin
+failures. codexclaw still does not fork plugin commands directly, persist raw
+MCP arguments or outputs, or make Codex sandbox/approval decisions.
+
+Managed MCP config is private host state. It is written atomically under the
+codexclaw state directory with private permissions, rejects symlink escapes, and
+contains only descriptor command/args plus allowlisted env values required by
+app-server. Runtime status exposes plugin id, server name, desired/observed
+state, restart count, missing env names, and bounded error summaries only.
+The managed `CODEX_HOME` must be authenticated explicitly with
+`codex login --device-auth`; codexclaw does not copy Codex auth from a user's
+global home into the managed plugin-supervision home.
+
 ## OpenCandle Spike Boundary
 
 The OpenCandle MCP spike is intentionally narrower than a production plugin:

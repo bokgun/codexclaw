@@ -394,3 +394,11 @@ Expected result:
 - 2026-05-12: Addressed implementation review findings for explicit config
   source selection, roadmap-aligned supervision semantics, lifecycle stop/go
   gates, non-blocking startup, and expected file/module ownership.
+- 2026-05-12: Implemented app-server-managed supervision with runtime MCP
+  reload/status wrappers, managed MCP config rendering, private state-owned
+  config writes, metadata-only supervisor status, non-blocking HostRuntime
+  integration, focused tests, and roadmap/plugin-boundary documentation.
+- 2026-05-12: Addressed implementation/security review findings by launching
+  plugin-capable app-server with an allowlisted environment, redacting MCP
+  startup error summaries, and requiring explicit managed `CODEX_HOME`
+  authentication instead of copying global Codex auth.

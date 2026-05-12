@@ -55,6 +55,27 @@ export interface SkillsListResponse {
   }>;
 }
 
+export type McpServerStatusDetail = "full" | "toolsAndAuthOnly";
+
+export interface McpServerStatusListParams {
+  cursor?: string | null;
+  limit?: number | null;
+  detail?: McpServerStatusDetail | null;
+}
+
+export interface McpServerStatusSummary {
+  name: string;
+  tools?: JsonObject;
+  resources?: readonly JsonValue[];
+  resourceTemplates?: readonly JsonValue[];
+  authStatus?: JsonValue;
+}
+
+export interface McpServerStatusListResponse {
+  data: McpServerStatusSummary[];
+  nextCursor: string | null;
+}
+
 export interface ThreadCapabilityProbeResult {
   list: boolean;
   archiveExternallyVerified: boolean;
@@ -74,7 +95,11 @@ export const CODEX_METHODS = {
   turnInterrupt: "turn/interrupt",
   commandApproval: "item/commandExecution/requestApproval",
   fileApproval: "item/fileChange/requestApproval",
-  skillsList: "skills/list"
+  skillsList: "skills/list",
+  mcpServerReload: "config/mcpServer/reload",
+  mcpServerStatusList: "mcpServerStatus/list",
+  mcpServerStartupStatusUpdated: "mcpServer/startupStatus/updated",
+  mcpServerElicitationRequest: "mcpServer/elicitation/request"
 } as const;
 
 export class CodexRuntimeClient {
@@ -206,6 +231,14 @@ export class CodexRuntimeClient {
     return (await this.transport.request(CODEX_METHODS.skillsList, params as JsonObject)) as unknown as SkillsListResponse;
   }
 
+  async reloadMcpServers(): Promise<void> {
+    await this.transport.request(CODEX_METHODS.mcpServerReload);
+  }
+
+  async listMcpServerStatus(params: McpServerStatusListParams = {}): Promise<McpServerStatusListResponse> {
+    return (await this.transport.request(CODEX_METHODS.mcpServerStatusList, params as JsonObject)) as unknown as McpServerStatusListResponse;
+  }
+
   sendApprovalResponse(method: string, requestId: number | string, accepted: boolean): void {
     if (!isObservedApprovalMethod(method)) {
       throw new CapabilityError(`Unsupported approval method '${method}'`);
@@ -220,6 +253,27 @@ export class CodexRuntimeClient {
         requestId: request.id,
         method: request.method,
         params: request.params ?? null
+      });
+      return;
+    }
+
+    if (request.method === CODEX_METHODS.mcpServerElicitationRequest) {
+      this.transport.respond(request.id, { action: "decline", content: null, _meta: null });
+      this.emit({
+        kind: "mcp_server_request_failed_closed",
+        method: request.method
+      });
+      return;
+    }
+
+    if (request.method.startsWith("mcpServer/")) {
+      this.transport.respondError(request.id, {
+        code: -32601,
+        message: "Unsupported MCP server request method"
+      });
+      this.emit({
+        kind: "mcp_server_request_failed_closed",
+        method: request.method
       });
       return;
     }
@@ -273,6 +327,9 @@ export class CodexRuntimeClient {
       case "skills/changed":
         this.emit({ kind: "skills_changed" });
         return;
+      case CODEX_METHODS.mcpServerStartupStatusUpdated:
+        this.emit(summarizeMcpStartupStatus(params));
+        return;
       default:
         this.emit({ kind: "unknown", method: notification.method, params: notification.params });
     }
@@ -316,6 +373,23 @@ function readString(object: JsonObject, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function summarizeMcpStartupStatus(params: JsonObject): RuntimeEvent {
+  const name = readString(params, "name");
+  const status = readString(params, "status");
+  const error = readString(params, "error");
+  return {
+    kind: "mcp_server_startup_status",
+    serverName: name ?? "unknown",
+    startupState: readMcpStartupState(status),
+    errorSummary: error ? redactSensitiveText(error).slice(0, 160) : undefined
+  };
+}
+
+function readMcpStartupState(value: string | undefined): "starting" | "ready" | "failed" | "cancelled" | "unknown" {
+  if (value === "starting" || value === "ready" || value === "failed" || value === "cancelled") return value;
+  return "unknown";
+}
+
 function readAddedFileChangePaths(item: JsonObject): readonly string[] {
   if (readString(item, "type") !== "fileChange") return [];
   const status = readString(item, "status");
@@ -337,4 +411,20 @@ function readAddedFileChangePaths(item: JsonObject): readonly string[] {
 function boundedErrorShape(error: unknown): string {
   if (error instanceof Error) return `${error.name}:${error.message}`.slice(0, 160);
   return String(error).slice(0, 160);
+}
+
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/Bot\s+[A-Za-z0-9._-]+/g, "Bot [redacted]")
+    .replace(/\/bot\d+:[A-Za-z0-9_-]+/g, "/bot[redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "sk-[redacted]")
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{16,}\b/g, "xox[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{16,}\b/g, "gh[redacted]")
+    .replace(/\b[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|KEY)=([^\s]+)/g, (match) => {
+      const equals = match.indexOf("=");
+      return `${match.slice(0, equals + 1)}[redacted]`;
+    })
+    .replace(/([?&](?:token|key|secret|password|authorization|cookie)=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/([A-Za-z0-9_-]{20,}:[A-Za-z0-9._-]{20,})/g, "[redacted]");
 }
