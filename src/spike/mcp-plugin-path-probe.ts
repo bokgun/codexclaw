@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,10 +15,22 @@ type ProbeObservation = {
   rawPayloadPersisted: false;
 };
 
+type ProbeTarget = {
+  id: string;
+  serverName: string;
+  serverInfoName: string;
+  toolName: string;
+  serverPath: string;
+  directArguments: JsonObject;
+  malformedArguments: JsonObject;
+  turnPrompt: string;
+  requiresNetworkProvider: boolean;
+};
+
 const root = process.cwd();
-const toyServerName = "codexclaw-toy";
-const toyToolName = "codexclaw_echo_shape";
+const target = selectTarget();
 const runTurnProbe = process.env.CODEXCLAW_MCP_PROBE_TURN === "1";
+const copyAuth = process.env.CODEXCLAW_MCP_PROBE_COPY_AUTH === "1";
 const codexCommand = process.env.CODEXCLAW_MCP_PROBE_CODEX ?? "codex";
 const bunCommand = process.execPath;
 
@@ -30,6 +42,9 @@ console.error("  nested_v2_imported_by_active_client_request=yes");
 console.error("  schema_gate_required=bun run schema:verify");
 console.error("  raw_payload_persistence=false");
 console.error("  direct_tool_call_scope=probe_only_non_production");
+console.error(`  target=${target.id}`);
+console.error(`  network_provider=${target.requiresNetworkProvider ? "yes" : "no"}`);
+console.error(`  auth_copied_to_temp_codex_home=${copyAuth ? "yes" : "no"}`);
 
 const appServer = await startIsolatedAppServer();
 
@@ -62,8 +77,8 @@ try {
     await delay(1_000);
 
     const status = await probeMethod(client, "mcpServerStatus/list", { detail: "full", limit: 20 });
-    const toyReady = isToyServerReady(status);
-    console.error(`[probe] toy_server_ready=${toyReady ? "yes" : "no"}`);
+    const targetReady = isTargetServerReady(status);
+    console.error(`[probe] target_server_ready=${targetReady ? "yes" : "no"}`);
 
     let threadId: string | undefined;
     try {
@@ -85,43 +100,38 @@ try {
 
     await probeFailureCases(client, threadId);
 
-    if (toyReady && threadId) {
+    if (targetReady && threadId) {
       await probeMethod(client, "mcpServer/tool/call", {
         threadId,
-        server: toyServerName,
-        tool: toyToolName,
-        arguments: {
-          label: "MCP_PATH_SPIKE"
-        }
+        server: target.serverName,
+        tool: target.toolName,
+        arguments: target.directArguments
       });
     } else {
       observations.push({
         method: "mcpServer/tool/call",
         status: "skipped",
-        shapeSummary: `toyReady=${toyReady ? "yes" : "no"} threadId=${threadId ? "present" : "missing"}`,
+        shapeSummary: `targetReady=${targetReady ? "yes" : "no"} threadId=${threadId ? "present" : "missing"}`,
         rawPayloadPersisted: false
       });
     }
 
-    if (runTurnProbe && toyReady && threadId) {
+    if (runTurnProbe && targetReady && threadId) {
       const startIndex = events.mark();
-      await startTurn(
-        client,
-        threadId,
-        "Use the MCP toy tool named codexclaw_echo_shape on server codexclaw-toy with a short label, then summarize only whether it succeeded."
-      );
+      await startTurn(client, threadId, target.turnPrompt);
       const terminal = await events.waitForTurnTerminal(Number(process.env.CODEXCLAW_PROBE_TIMEOUT_MS ?? 120_000), startIndex);
+      const mcpEvents = events.countMcpEvents(startIndex);
       observations.push({
         method: "turn/start:mcp",
-        status: terminal ? "success" : "error",
-        shapeSummary: `terminal=${terminal ?? "timeout"} mcp_events=${events.countMcpEvents(startIndex)}`,
+        status: terminal && mcpEvents > 0 ? "success" : "error",
+        shapeSummary: `terminal=${terminal ?? "timeout"} mcp_events=${mcpEvents}`,
         rawPayloadPersisted: false
       });
     } else {
       observations.push({
         method: "turn/start:mcp",
         status: "skipped",
-        shapeSummary: `enabled=${runTurnProbe ? "yes" : "no"} toyReady=${toyReady ? "yes" : "no"} auth_required=likely`,
+        shapeSummary: `enabled=${runTurnProbe ? "yes" : "no"} targetReady=${targetReady ? "yes" : "no"} auth_copied=${copyAuth ? "yes" : "no"}`,
         rawPayloadPersisted: false
       });
     }
@@ -209,24 +219,22 @@ async function probeFailureCases(client: CodexWsClient, threadId: string | undef
   await probeMethod(client, "mcpServer/tool/call", {
     threadId,
     server: "codexclaw-missing",
-    tool: toyToolName
+    tool: target.toolName
   });
   await probeMethod(client, "mcpServer/tool/call", {
     threadId,
-    server: toyServerName,
+    server: target.serverName,
     tool: "codexclaw_missing_tool"
   });
   await probeMethod(client, "mcpServer/tool/call", {
     threadId,
-    server: toyServerName,
-    tool: toyToolName,
-    arguments: {
-      label: ""
-    }
+    server: target.serverName,
+    tool: target.toolName,
+    arguments: target.malformedArguments
   });
 }
 
-function isToyServerReady(value: JsonValue | undefined): boolean {
+function isTargetServerReady(value: JsonValue | undefined): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const data = (value as JsonObject).data;
   if (!Array.isArray(data)) return false;
@@ -234,9 +242,9 @@ function isToyServerReady(value: JsonValue | undefined): boolean {
   return data.some((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const status = item as JsonObject;
-    if (status.name !== toyServerName) return false;
+    if (status.name !== target.serverName) return false;
     const tools = status.tools;
-    return !!tools && typeof tools === "object" && !Array.isArray(tools) && toyToolName in tools;
+    return !!tools && typeof tools === "object" && !Array.isArray(tools) && target.toolName in tools;
   });
 }
 
@@ -258,11 +266,16 @@ async function startIsolatedAppServer(): Promise<{
     const tokenFile = join(stateDir, "codex.token");
     await writeFile(tokenFile, randomBytes(32).toString("hex"), { mode: 0o600 });
     await chmod(tokenFile, 0o600);
+    if (copyAuth) await copyCodexAuth(codexDir);
 
-    const toyServerPath = resolve(root, "src/spike/mcp-toy-server.ts");
     await writeFile(
       join(codexDir, "config.toml"),
-      ["[mcp_servers.codexclaw-toy]", `command = ${tomlString(bunCommand)}`, `args = [${tomlString(toyServerPath)}]`, ""].join("\n"),
+      [
+        `[mcp_servers.${target.serverName}]`,
+        `command = ${tomlString(bunCommand)}`,
+        `args = [${tomlString(target.serverPath)}]`,
+        ""
+      ].join("\n"),
       { mode: 0o600 }
     );
 
@@ -300,6 +313,17 @@ async function startIsolatedAppServer(): Promise<{
   }
 }
 
+async function copyCodexAuth(codexDir: string): Promise<void> {
+  const sourceCodexHome = process.env.CODEXCLAW_MCP_PROBE_AUTH_CODEX_HOME
+    ?? process.env.CODEX_HOME
+    ?? (process.env.HOME ? join(process.env.HOME, ".codex") : undefined);
+  if (!sourceCodexHome) throw new Error("CODEXCLAW_MCP_PROBE_COPY_AUTH requires HOME, CODEX_HOME, or CODEXCLAW_MCP_PROBE_AUTH_CODEX_HOME");
+
+  const authTarget = join(codexDir, "auth.json");
+  await copyFile(join(sourceCodexHome, "auth.json"), authTarget);
+  await chmod(authTarget, 0o600);
+}
+
 function isolatedAppServerEnv(home: string, codexDir: string, stateDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     HOME: home,
@@ -313,6 +337,8 @@ function isolatedAppServerEnv(home: string, codexDir: string, stateDir: string):
 
   const term = process.env.TERM;
   if (term) env.TERM = term;
+  const opencandleRoot = process.env.OPENCANDLE_ROOT;
+  if (opencandleRoot) env.OPENCANDLE_ROOT = opencandleRoot;
   return env;
 }
 
@@ -500,4 +526,39 @@ function printObservations(): void {
       `  method=${observation.method} status=${observation.status} shape=${observation.shapeSummary} rawPayloadPersisted=${observation.rawPayloadPersisted}`
     );
   }
+}
+
+function selectTarget(): ProbeTarget {
+  const id = process.env.CODEXCLAW_MCP_PROBE_TARGET ?? "toy";
+  if (id === "toy") {
+    return {
+      id,
+      serverName: "codexclaw-toy",
+      serverInfoName: "codexclaw-mcp-toy",
+      toolName: "codexclaw_echo_shape",
+      serverPath: resolve(root, "src/spike/mcp-toy-server.ts"),
+      directArguments: { label: "MCP_PATH_SPIKE" },
+      malformedArguments: { label: "" },
+      turnPrompt:
+        "Use the MCP toy tool named codexclaw_echo_shape on server codexclaw-toy with the label MCP_TURN_SPIKE, then answer with only whether the MCP tool call succeeded.",
+      requiresNetworkProvider: false
+    };
+  }
+
+  if (id === "opencandle") {
+    return {
+      id,
+      serverName: "opencandle",
+      serverInfoName: "codexclaw-opencandle-mcp",
+      toolName: "get_fear_greed",
+      serverPath: resolve(root, "src/spike/opencandle-mcp-server.ts"),
+      directArguments: {},
+      malformedArguments: { unexpected: true },
+      turnPrompt:
+        "Use the MCP tool get_fear_greed on server opencandle to fetch the current crypto Fear and Greed index, then summarize only whether the MCP tool call succeeded and the returned classification.",
+      requiresNetworkProvider: true
+    };
+  }
+
+  throw new Error(`Unsupported CODEXCLAW_MCP_PROBE_TARGET: ${id}`);
 }

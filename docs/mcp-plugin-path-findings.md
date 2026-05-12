@@ -1,6 +1,6 @@
 # MCP Plugin Path Findings
 
-Status: direct MCP client call works; turn-mediated MCP use remains pending.
+Status: MCP direct client calls and turn-mediated MCP tool use both work.
 
 Date: 2026-05-12
 
@@ -44,6 +44,18 @@ Script:
 bun run spike:mcp-plugin-path
 ```
 
+OpenCandle-backed target:
+
+```bash
+bun run spike:opencandle-mcp
+```
+
+Optional authenticated turn-mediated probe:
+
+```bash
+CODEXCLAW_MCP_PROBE_COPY_AUTH=1 CODEXCLAW_MCP_PROBE_TURN=1 bun run spike:mcp-plugin-path
+```
+
 The script starts a disposable app-server with an isolated `HOME`, `CODEX_HOME`,
 state directory, token file, WebSocket port, and MCP server config. The
 generated config shape is:
@@ -76,6 +88,11 @@ not re-emitted as codexclaw-owned logs. `mcpServer/elicitation/request` is
 declined, and other unexpected server requests receive a fail-closed unsupported
 method response.
 
+When `CODEXCLAW_MCP_PROBE_COPY_AUTH=1` is set, the probe copies only
+`auth.json` from the configured Codex home into the temporary `CODEX_HOME` so a
+normal model turn can be attempted without mutating global Codex config. The
+temporary auth copy is deleted with the disposable app-server state.
+
 Direct `mcpServer/tool/call` is used only to prove app-server MCP reachability
 in this spike. It is not approved as a production plugin execution path unless a
 future plan adds explicit channel authorization, user confirmation, and policy
@@ -95,6 +112,23 @@ It exposes:
 The toy server is not a production plugin host, does not use network, and does
 not require secrets.
 
+## OpenCandle Server
+
+The OpenCandle spike server is `src/spike/opencandle-mcp-server.ts`.
+
+It exposes:
+
+- configured server name: `opencandle`
+- MCP serverInfo name: `codexclaw-opencandle-mcp`
+- tool name: `get_fear_greed`
+- provider: OpenCandle `getFearGreedIndex`
+- network provider: yes, OpenCandle currently uses `api.alternative.me`
+
+The server imports OpenCandle provider code from `OPENCANDLE_ROOT`, defaulting
+to `/Users/bokgun/Workspace/OpenCandle`. It is not a production plugin registry
+or stable adapter package. `OPENCANDLE_ROOT` is the only OpenCandle-specific
+environment variable allowlisted by the spike app-server environment.
+
 ## Current Outcome
 
 `bun run spike:mcp-plugin-path` was run on 2026-05-12. The script created an
@@ -111,25 +145,65 @@ Observed result:
 - direct `mcpServer/tool/call` for an unknown server, unknown toy tool, and
   malformed arguments returned bounded error shapes;
 - app-server emitted `mcpServer/startupStatus/updated` notifications;
-- normal turn-mediated MCP probing was skipped by default because the isolated
-  home does not include Codex auth tokens.
+- unauthenticated normal turn-mediated MCP probing is skipped by default unless
+  `CODEXCLAW_MCP_PROBE_COPY_AUTH=1 CODEXCLAW_MCP_PROBE_TURN=1` is set.
 
 Interpretation:
 
 - MCP is reachable through a Codex app-server direct client call path for
   probe-only validation.
 - MCP server discovery from disposable config is viable.
-- Normal turn-mediated MCP tool use was not proven in this run.
-- Earlier unauthenticated isolated-home attempts completed without MCP
-  progress/items after upstream model authentication failures. That result is
-  not a definitive negative.
+- Normal turn-mediated MCP tool use is viable when the temporary `CODEX_HOME`
+  has Codex auth.
 
 Current outcome category:
 
-- `mcp_direct_call_viable_turn_pending` for this isolated repeatable run.
-- A follow-up run using an authenticated isolated Codex home, or a deliberate
-  auth-safe fixture, is required before declaring MCP viable for normal
-  turn-mediated plugin architecture.
+- `mcp_turn_mediated_viable` for the authenticated isolated run.
+- This is sufficient evidence to prefer MCP as the next codexclaw plugin
+  direction over client-side dynamic tool registration for the pinned
+  app-server version.
+
+The plugin boundary and minimum security gate are recorded in
+`docs/plugin-boundary.md`.
+
+## Turn-Mediated Validation
+
+Authenticated toy target:
+
+```bash
+CODEXCLAW_MCP_PROBE_COPY_AUTH=1 CODEXCLAW_MCP_PROBE_TURN=1 bun run spike:mcp-plugin-path
+```
+
+Observed on 2026-05-12:
+
+- temporary `CODEX_HOME` was used;
+- only `auth.json` was copied into that temporary home;
+- `codexclaw-toy` was discovered;
+- direct diagnostic `mcpServer/tool/call` succeeded;
+- model turn completed;
+- two MCP item/progress events were counted;
+- `mcpServer/elicitation/request` was received and declined fail-closed;
+- raw MCP arguments and raw tool output were not logged or persisted by
+  codexclaw.
+
+Authenticated OpenCandle target:
+
+```bash
+CODEXCLAW_MCP_PROBE_TARGET=opencandle CODEXCLAW_MCP_PROBE_COPY_AUTH=1 CODEXCLAW_MCP_PROBE_TURN=1 bun src/spike/mcp-plugin-path-probe.ts
+```
+
+Observed on 2026-05-12:
+
+- `opencandle` server was discovered;
+- direct diagnostic call to `get_fear_greed` succeeded;
+- model turn completed;
+- two MCP item/progress events were counted;
+- `mcpServer/elicitation/request` was received and declined fail-closed;
+- OpenCandle provider use requires network access and is therefore a plugin
+  metadata/security-gate field, not an implicit capability.
+
+The probe records event counts only. It does not persist conversation text,
+tool arguments, tool output, provider response bodies, or auth material.
 
 ## Storage And Security Boundary
 
