@@ -1,14 +1,15 @@
 # codexclaw Roadmap
 
-Last updated: 2026-05-01
+Last updated: 2026-05-12
 Source of truth: `docs/seed/PRD.md` v1.1
 
 This roadmap translates the PRD milestones into execution phases. It keeps the PRD's core constraint intact: codexclaw is a thin Bun + TypeScript host above `codex app-server`, not a reimplementation of Codex.
 
 ## Current Status
 
-M0 runtime and schema gates are in place, and the first M1 core runtime slice is
-implemented:
+M0 through M4 implementation work is complete enough for the current roadmap
+baseline, and MCP-backed plugin viability has been validated as the next major
+product direction:
 
 - Bun + TypeScript project initialized.
 - Local `codex app-server` startup helper exists.
@@ -18,13 +19,17 @@ implemented:
 - Active app-server schemas are checked in, pinned, and verified by
   `bun run schema:verify`.
 - Project subagents and planning/review workflows are configured.
+- CLI, Telegram, Discord personal mode, scheduler, pointer store, approval
+  bridge, thread lifecycle, skills inspection, container docs, and install
+  guidance have implementation coverage from the M1-M4 tracks.
+- MCP direct calls and normal turn-mediated MCP tool use have been validated,
+  including a minimal OpenCandle-backed MCP spike.
 
 M0 findings now record observed behavior for initialize, thread, turn
 streaming, approval, cancel, reconnect, and active schema provenance.
 
-M1 now has a SQLite pointer store, normalized channel contracts, CLI adapter,
-thread manager, router queue, approval bridge, structured stderr logging, and
-focused Bun tests.
+MCP plugin production work is now tracked as M5. The detailed execution roadmap
+is `docs/plans/2026-05-12-mcp-plugin-production-roadmap.md`.
 
 ## Release Gates
 
@@ -33,6 +38,7 @@ focused Bun tests.
 | M0 Gate | M1 Core | All PRD §16.4 success criteria pass, and no PRD §16.5 hard failure remains unresolved. |
 | Schema Gate | M1 Core | Generated schemas match the pinned Codex CLI/app-server version. M1 cannot proceed from planning into implementation while app-server schemas come from an ambient, unpinned `codex` binary. |
 | Security Gate | Channel releases | Channel credentials, user identity, approval routing, token handling, and AGENTS.md trust boundary are reviewed. |
+| Plugin Security Gate | M5 Plugin milestones | Plugins are disabled by default, descriptors validate command/env/network metadata, raw MCP args/output are not persisted, and MCP elicitation remains fail-closed unless separately designed. |
 | GA Gate | v1.0 | Install path, docs, container guidance, CLI, Telegram stable channel, Discord personal mode, Scheduler, Pointer Store, Approval Bridge, and thread lifecycle commands are usable by a fresh clone user. |
 
 ## M0 - App-Server Runtime Spike
@@ -252,6 +258,44 @@ Exit criteria:
 - Users can inspect available Codex and host skills with source/scope labels,
   without granting new execution privileges.
 
+## M5 - MCP-Backed Local Plugins
+
+Goal: add local plugin capability through MCP while keeping Codex app-server in
+charge of tool discovery and invocation.
+
+Reference roadmap:
+
+- `docs/plans/2026-05-12-mcp-plugin-production-roadmap.md`
+
+Planned sequence:
+
+- M5a descriptor schema and security gate.
+- M5b local registry and config resolution.
+- M5c process supervision.
+- M5d channel UX.
+- M5e OpenCandle production plugin slice.
+- M5f hardening and release documentation.
+
+Non-goals:
+
+- plugin marketplace or remote plugin downloads;
+- client-side dynamic tool execution bridge;
+- bypassing Codex sandbox or approval behavior;
+- persisting raw MCP arguments, raw MCP output, conversation bodies, diffs, or
+  approval histories in codexclaw state.
+
+Exit criteria:
+
+- Plugins are disabled by default and require explicit enablement.
+- Validated enabled plugin descriptors can be projected into app-server MCP
+  config.
+- codexclaw can supervise local MCP plugin server processes with bounded,
+  redacted lifecycle status.
+- Telegram, Discord, and CLI users can inspect plugin status and enable or
+  disable plugins with network/provider warnings.
+- OpenCandle is available as a first production-style local MCP plugin slice.
+- `bun run typecheck`, focused tests, and plugin manual validation pass.
+
 ## v1.0 GA
 
 Goal: publish a stable personal codexclaw release.
@@ -266,6 +310,8 @@ Required capabilities:
 - Approval Bridge.
 - Thread lifecycle commands.
 - WSS/container deployment guidance.
+- Local MCP plugin support with an explicitly enabled first-party sample or
+  OpenCandle slice.
 - MIT license and public OSS documentation.
 
 Success indicators:
@@ -282,6 +328,8 @@ Candidate scope after v1.0:
 - WhatsApp, Matrix, iMessage relay, or Email adapters as skills.
 - Skill selection UX such as `/skill use <name>` after M4 validates discovery
   and boundaries.
+- Plugin marketplace or remote plugin installation, if local MCP plugins prove
+  stable enough to justify the larger security model.
 - More complete stream recovery if app-server protocol support allows it.
 - Schema-diff automation in CI.
 
