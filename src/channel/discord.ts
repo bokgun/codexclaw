@@ -344,7 +344,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     return { channelMessageId: discordMessageId(sent.channel_id, sent.id) };
   }
 
-  async acknowledge(request: { channelThreadKey?: string; userKey: UserKey; kind: "received" | "typing" }): Promise<void> {
+  async acknowledge(request: { channelThreadKey?: string; userKey: UserKey; kind: "received" | "typing" | "typing_stop" }): Promise<void> {
     if (request.kind !== "received") return;
   }
 

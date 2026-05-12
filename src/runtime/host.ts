@@ -365,6 +365,20 @@ function toInboundMessage(message: NormalizedMessage): InboundMessage {
 class ChannelAdapterSink implements ChannelSink {
   constructor(private readonly channel: ChannelAdapter) {}
 
+  async acknowledge(event: {
+    channel: ChannelName;
+    userKey: UserKey;
+    channelThreadKey?: string;
+    kind: "typing" | "typing_stop";
+  }): Promise<void> {
+    await this.channel.acknowledge?.({
+      channel: event.channel,
+      userKey: event.userKey,
+      channelThreadKey: event.channelThreadKey,
+      kind: event.kind
+    });
+  }
+
   async flushDeltas(): Promise<void> {
     await this.channel.flushDeltas?.();
   }

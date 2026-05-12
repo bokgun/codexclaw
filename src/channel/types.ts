@@ -133,9 +133,9 @@ export interface ChannelBranchSuggestionResponse {
 export interface ChannelAcknowledgeRequest {
   channel: ChannelKind;
   userKey: UserKey;
-  channelMessageId: ChannelMessageId;
+  channelMessageId?: ChannelMessageId;
   channelThreadKey?: string;
-  kind: "received" | "typing";
+  kind: "received" | "typing" | "typing_stop";
 }
 
 export interface ChannelAdapter {

@@ -100,6 +100,21 @@ describe("TelegramChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("sends typing indicators until a response is sent", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api, { deltaFlushMs: 10_000 });
+
+    await adapter.acknowledge({ kind: "typing", userKey: "telegram:42", channelThreadKey: "telegram:42" });
+    await adapter.acknowledge({ kind: "typing", userKey: "telegram:42", channelThreadKey: "telegram:42" });
+    expect(api.actions).toEqual([{ chat_id: 42, action: "typing" }]);
+
+    await adapter.send({ kind: "text", channel: "telegram", userKey: "telegram:42", channelThreadKey: "telegram:42", text: "Done." });
+    await adapter.acknowledge({ kind: "typing_stop", userKey: "telegram:42", channelThreadKey: "telegram:42" });
+
+    expect(api.sent.map((message) => message.text)).toEqual(["Done."]);
+    await adapter.close();
+  });
+
   test("flushes deltas, sends safe text, then sends local documents", async () => {
     const api = new FakeTelegramApi();
     const adapter = adapterWith(api, { deltaFlushMs: 10_000 });

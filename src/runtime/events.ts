@@ -50,6 +50,15 @@ export class EventDispatcher {
     }
 
     if (event.kind === "turn_started" && event.threadId) {
+      const target = this.threadTargets.get(event.threadId);
+      if (target && isChatChannel(target.channel)) {
+        await this.channel.acknowledge?.({
+          kind: "typing",
+          channel: target.channel,
+          userKey: target.userKey,
+          channelThreadKey: target.channelThreadKey
+        });
+      }
       this.fileDelivery?.collector.startTurn(event.threadId, event.turnId);
     }
 
@@ -62,6 +71,12 @@ export class EventDispatcher {
     if (eventThreadId) {
       const target = this.threadTargets.get(eventThreadId);
       if (target && isChatChannel(target.channel) && isTerminalTurnEvent(event)) {
+        await this.channel.acknowledge?.({
+          kind: "typing_stop",
+          channel: target.channel,
+          userKey: target.userKey,
+          channelThreadKey: target.channelThreadKey
+        });
         await this.channel.flushDeltas?.();
       }
       if (target && event.kind === "turn_completed") {

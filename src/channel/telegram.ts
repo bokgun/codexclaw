@@ -261,6 +261,11 @@ interface DeltaBuffer {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+interface TypingIndicator {
+  chatId: number | string;
+  timer: ReturnType<typeof setInterval>;
+}
+
 export class TelegramChannelAdapter implements ChannelAdapter {
   readonly name = "telegram" as const;
   readonly receive: AsyncIterable<NormalizedMessage>;
@@ -285,6 +290,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
   private readonly recentUpdates: number[] = [];
   private readonly recentUpdateSet = new Set<number>();
   private readonly deltaBuffers = new Map<string, DeltaBuffer>();
+  private readonly typingIndicators = new Map<string, TypingIndicator>();
   private readonly abort = new AbortController();
   private nextOffset: number | undefined;
   private polling?: Promise<void>;
@@ -317,6 +323,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
       return {};
     }
 
+    this.stopTyping(chatId);
     await this.flushDeltasFor(chatId);
     const text = message.text || " ";
     const replyTo = parseTelegramMessageId(message.replyToMessageId);
@@ -327,6 +334,7 @@ export class TelegramChannelAdapter implements ChannelAdapter {
 
   async requestApproval(request: ChannelApprovalRequest): Promise<ChannelApprovalPrompt> {
     const chatId = this.resolveChatId(request);
+    this.stopTyping(chatId);
     await this.flushDeltasFor(chatId);
 
     const key = this.keyFactory();
@@ -395,12 +403,19 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     return { channelMessageId: telegramMessageId(sent.chat.id, sent.message_id) };
   }
 
-  async acknowledge(request: { channelThreadKey?: string; userKey: UserKey; kind: "received" | "typing" }): Promise<void> {
+  async acknowledge(request: { channelThreadKey?: string; userKey: UserKey; kind: "received" | "typing" | "typing_stop" }): Promise<void> {
+    if (request.kind === "typing_stop") {
+      const chatId = request.channelThreadKey
+        ? parseTelegramChannelThreadKey(request.channelThreadKey)
+        : parseTelegramUserKey(request.userKey);
+      this.stopTyping(chatId);
+      return;
+    }
     if (request.kind !== "typing" || !this.api.sendChatAction) return;
     const chatId = request.channelThreadKey
       ? parseTelegramChannelThreadKey(request.channelThreadKey)
       : parseTelegramUserKey(request.userKey);
-    await this.api.sendChatAction({ chat_id: chatId, action: "typing" });
+    this.startTyping(chatId);
   }
 
   async processUpdate(update: TelegramUpdate): Promise<void> {
@@ -423,6 +438,8 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     for (const buffer of this.deltaBuffers.values()) {
       if (buffer.timer) clearTimeout(buffer.timer);
     }
+    for (const indicator of this.typingIndicators.values()) clearInterval(indicator.timer);
+    this.typingIndicators.clear();
     await this.flushDeltas().catch((error) => {
       this.logger.warn("telegram_delta_flush_failed_on_close", { error: error instanceof Error ? error.message : String(error) });
     });
@@ -755,7 +772,31 @@ export class TelegramChannelAdapter implements ChannelAdapter {
     this.deltaBuffers.delete(key);
     if (buffer.timer) clearTimeout(buffer.timer);
     if (!buffer.text) return;
+    this.stopTyping(buffer.chatId);
     await this.sendChunked(buffer.chatId, buffer.text);
+  }
+
+  private startTyping(chatId: number | string): void {
+    if (!this.api.sendChatAction || this.typingIndicators.has(String(chatId))) return;
+    const send = (): void => {
+      void this.api.sendChatAction?.({ chat_id: chatId, action: "typing" }).catch((error) => {
+        this.logger.debug("telegram_typing_indicator_failed", {
+          error: redactTelegramSecrets(error instanceof Error ? error.message : String(error), this.config.botToken)
+        });
+      });
+    };
+    send();
+    const timer = setInterval(send, 4_000);
+    if (typeof timer === "object" && timer && "unref" in timer && typeof timer.unref === "function") timer.unref();
+    this.typingIndicators.set(String(chatId), { chatId, timer });
+  }
+
+  private stopTyping(chatId: number | string): void {
+    const key = String(chatId);
+    const indicator = this.typingIndicators.get(key);
+    if (!indicator) return;
+    clearInterval(indicator.timer);
+    this.typingIndicators.delete(key);
   }
 
   private async sendChunked(chatId: number | string, text: string, replyTo?: number): Promise<ChannelSendResult> {

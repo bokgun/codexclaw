@@ -64,6 +64,24 @@ describe("EventDispatcher", () => {
     expect(sink.flushCount).toBe(1);
   });
 
+  test("starts and stops chat typing indicators around active turns", async () => {
+    const sink = new MemorySink();
+    const dispatcher = new EventDispatcher(sink, noopLogger);
+    dispatcher.bindThread("thread-1", {
+      channel: "telegram",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42"
+    });
+
+    await dispatcher.dispatch({ kind: "turn_started", threadId: "thread-1", turnId: "turn-1" });
+    await dispatcher.dispatch({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-1" });
+
+    expect(sink.acknowledgements).toEqual([
+      { kind: "typing", channel: "telegram", userKey: "telegram:42", channelThreadKey: "telegram:42" },
+      { kind: "typing_stop", channel: "telegram", userKey: "telegram:42", channelThreadKey: "telegram:42" }
+    ]);
+  });
+
   test("emits metadata-only document delivery for intended Telegram turns", async () => {
     const root = mkdtempSync(join(tmpdir(), "codexclaw-events-"));
     const sink = new MemorySink();
@@ -182,10 +200,15 @@ describe("EventDispatcher", () => {
 
 class MemorySink implements ChannelSink {
   readonly events: OutboundEvent[] = [];
+  readonly acknowledgements: Array<Parameters<NonNullable<ChannelSink["acknowledge"]>>[0]> = [];
   flushCount = 0;
 
   async send(event: OutboundEvent): Promise<void> {
     this.events.push(event);
+  }
+
+  async acknowledge(event: Parameters<NonNullable<ChannelSink["acknowledge"]>>[0]): Promise<void> {
+    this.acknowledgements.push(event);
   }
 
   async flushDeltas(): Promise<void> {

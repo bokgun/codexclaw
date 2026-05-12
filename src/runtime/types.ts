@@ -87,6 +87,12 @@ export type OutboundEvent =
 
 export interface ChannelSink {
   send(event: OutboundEvent): Promise<{ channelMessageId?: string } | void>;
+  acknowledge?(event: {
+    channel: ChannelName;
+    userKey: UserKey;
+    channelThreadKey?: string;
+    kind: "typing" | "typing_stop";
+  }): Promise<void>;
   flushDeltas?(): Promise<void>;
 }
 
