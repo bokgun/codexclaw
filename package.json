@@ -23,6 +23,7 @@
     "spike:approval": "bun src/spike/approval-demo.ts",
     "spike:cancel": "bun src/spike/cancel-probe.ts",
     "spike:dynamic-tool": "bun src/spike/dynamic-tool-probe.ts",
+    "spike:mcp-plugin-path": "bun src/spike/mcp-plugin-path-probe.ts",
     "spike:reconnect": "bun src/spike/reconnect-probe.ts",
     "spike:pointer-store": "bun src/spike/pointer-store-probe.ts",
     "start:codex": "bash scripts/start-codex-app-server.sh"
