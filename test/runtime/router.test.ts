@@ -81,6 +81,27 @@ describe("Router", () => {
     store.close();
   });
 
+  test("prepares turn text from the live inbound message", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink, {
+      prepareTurnText: ({ text, message }) => (message.channel === "telegram" ? `${text}\nHOST FILE DELIVERY` : text)
+    });
+    codex.onStarted = (threadId, turnId) => router.handleRuntimeEvent({ kind: "turn_completed", threadId, turnId });
+
+    await router.receive({
+      ...message("생성한 보고서 파일을 텔레그램으로 보내줘"),
+      channel: "telegram",
+      channelMessageId: "telegram:42:1",
+      userKey: "telegram:42",
+      channelThreadKey: "telegram:42"
+    });
+
+    expect(codex.turns.at(-1)?.text).toContain("HOST FILE DELIVERY");
+    store.close();
+  });
+
   test("slash commands switch active labels", async () => {
     const store = createPointerStore();
     const codex = new MockCodex();

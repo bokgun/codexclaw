@@ -124,6 +124,22 @@ export function hasTelegramFileDeliveryIntent(text: string): boolean {
   return (deliveryVerb && fileNoun && generatedHint) || (koreanDeliveryVerb && koreanFileNoun && koreanGeneratedHint);
 }
 
+const TELEGRAM_FILE_DELIVERY_HOST_HINT = [
+  "",
+  "Codexclaw host capability context:",
+  "- The user is talking through Telegram and explicitly asked for file delivery in this turn.",
+  "- Do not say you lack Telegram, Bot API, chat_id, or sendDocument tools.",
+  "- Do not call Telegram APIs yourself or ask the user for Telegram credentials.",
+  "- Create the requested deliverable as a new file in the workspace during this turn. If the user asked to send an existing safe file, create a fresh copy artifact in the workspace during this turn.",
+  "- After the turn completes, codexclaw will send successful newly added files from this turn to the current Telegram chat.",
+  "- If no safe deliverable can be created, briefly explain why."
+].join("\n");
+
+export function attachTelegramFileDeliveryHostHint(text: string): string {
+  if (text.includes("Codexclaw host capability context:")) return text;
+  return `${text.trimEnd()}${TELEGRAM_FILE_DELIVERY_HOST_HINT}`;
+}
+
 export function validateCandidatePaths(candidates: readonly CandidatePath[], policy: FileDeliveryPolicy): ValidationResult {
   const accepted: LocalDocumentRef[] = [];
   const rejected: RejectedDocumentRef[] = [];

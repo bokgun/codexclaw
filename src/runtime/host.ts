@@ -18,7 +18,7 @@ import { ThreadManager } from "../thread/thread-manager.js";
 import { createWikiConfig, createWikiCommandService } from "../wiki/index.js";
 import { BranchSuggestionCoordinator, type BranchSuggestionOptions } from "./branch-suggestion.js";
 import { EventDispatcher } from "./events.js";
-import { FileDeliveryCollector, hasTelegramFileDeliveryIntent } from "./file-delivery.js";
+import { attachTelegramFileDeliveryHostHint, FileDeliveryCollector, hasTelegramFileDeliveryIntent } from "./file-delivery.js";
 import { createJsonLineLogger, type RuntimeLogger } from "./log.js";
 import { Router } from "./router.js";
 import { SchedulerCoordinator, type SchedulerOptions } from "./scheduler.js";
@@ -113,6 +113,8 @@ export class HostRuntime {
         schedulerEnabled: this.schedulerOptions !== false && this.schedulerOptions.enabled !== false,
         wikiEnabled: Boolean(wikiService)
       }),
+      prepareTurnText: ({ text, message }) =>
+        isTelegramFileDeliveryMessage(message, fileDeliveryPolicy.enabled) ? attachTelegramFileDeliveryHostHint(text) : text,
       bindThread: (thread, message) => {
         const target = {
           userKey: message.userKey,
@@ -122,11 +124,7 @@ export class HostRuntime {
         this.threadTargets.set(thread.threadId, target);
         dispatcher.bindThread(thread.threadId, target, {
           fileDelivery: {
-            enabled:
-              fileDeliveryPolicy.enabled &&
-              message.channel === "telegram" &&
-              !message.channelMessageId.startsWith("task:") &&
-              hasTelegramFileDeliveryIntent(message.text),
+            enabled: isTelegramFileDeliveryMessage(message, fileDeliveryPolicy.enabled),
             userKey: message.userKey,
             channelThreadKey: message.channelThreadKey
           }
@@ -360,6 +358,15 @@ function toInboundMessage(message: NormalizedMessage): InboundMessage {
     receivedAt: message.receivedAt,
     channelThreadKey: message.channelThreadKey
   };
+}
+
+function isTelegramFileDeliveryMessage(message: InboundMessage, fileDeliveryEnabled: boolean): boolean {
+  return (
+    fileDeliveryEnabled &&
+    message.channel === "telegram" &&
+    !message.channelMessageId.startsWith("task:") &&
+    hasTelegramFileDeliveryIntent(message.text)
+  );
 }
 
 class ChannelAdapterSink implements ChannelSink {

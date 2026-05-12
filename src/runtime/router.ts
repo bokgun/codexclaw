@@ -11,6 +11,7 @@ import { TurnQueue } from "./turn-queue.js";
 
 export interface RouterOptions {
   bindThread?: (thread: ThreadRecord, message: InboundMessage) => void;
+  prepareTurnText?: (input: { text: string; message: InboundMessage }) => string;
   store?: PointerStore;
   wiki?: WikiCommandService;
   channel?: ChannelName;
@@ -115,7 +116,8 @@ export class Router {
         });
       }
 
-      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, message.text), message);
+      const turnText = this.prepareTurnText(this.attachPrefs(message.userKey, message.text), message);
+      await this.enqueueFollowUp(thread, turnText, message);
     } catch (error) {
       await this.channel.send({
         kind: "text",
@@ -542,10 +544,9 @@ export class Router {
       if (!this.connected) throw new RoutingError("Codex app-server is disconnected; wait for reconnect before sending more work.", "disconnected");
       const results = await wiki.query({ userKey: message.userKey, query: parsed.query, limit: parsed.limit });
       const thread = await this.threads.resolveRoutableThread(message.userKey);
-      await this.enqueueFollowUp(thread, this.attachPrefs(message.userKey, attachWikiContextToText(parsed.message, results)), {
-        ...message,
-        text: parsed.message
-      });
+      const turnMessage = { ...message, text: parsed.message };
+      const turnText = this.prepareTurnText(this.attachPrefs(message.userKey, attachWikiContextToText(parsed.message, results)), turnMessage);
+      await this.enqueueFollowUp(thread, turnText, turnMessage);
       return;
     }
     if (action === "lint") {
@@ -566,6 +567,10 @@ export class Router {
 
   private attachPrefs(userKey: string, text: string): string {
     return this.options.store ? attachPrefsToText(text, this.options.store.listPrefs(userKey)) : text;
+  }
+
+  private prepareTurnText(text: string, message: InboundMessage): string {
+    return this.options.prepareTurnText ? this.options.prepareTurnText({ text, message }) : text;
   }
 
   private async sendText(message: InboundMessage, text: string): Promise<void> {

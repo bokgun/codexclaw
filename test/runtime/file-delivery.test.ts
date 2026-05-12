@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  attachTelegramFileDeliveryHostHint,
   FileDeliveryCollector,
   hasTelegramFileDeliveryIntent,
   validateCandidatePaths,
@@ -17,6 +18,15 @@ describe("file delivery policy", () => {
     expect(hasTelegramFileDeliveryIntent("upload this generated csv document")).toBe(true);
     expect(hasTelegramFileDeliveryIntent("생성한 보고서 파일을 텔레그램으로 보내줘")).toBe(true);
     expect(hasTelegramFileDeliveryIntent("보고서 파일은 ./out/report.pdf 에 있어")).toBe(false);
+  });
+
+  test("adds host delivery context without asking Codex to call Telegram APIs", () => {
+    const text = attachTelegramFileDeliveryHostHint("생성한 보고서 파일을 텔레그램으로 보내줘");
+
+    expect(text).toContain("Do not say you lack Telegram");
+    expect(text).toContain("Create the requested deliverable as a new file");
+    expect(text).toContain("codexclaw will send successful newly added files");
+    expect(attachTelegramFileDeliveryHostHint(text)).toBe(text);
   });
 
   test("validates roots, duplicates, denied paths, size limits, and missing files", () => {
