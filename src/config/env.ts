@@ -80,6 +80,13 @@ export interface ThreadCapabilityConfig {
   unarchiveThread: boolean;
 }
 
+export interface PluginConfig {
+  pluginDirs: readonly string[];
+  maxDescriptorBytes: number;
+  workspaceRoot: string;
+  deniedRoots: readonly string[];
+}
+
 export function loadDotenv(path = ".env"): void {
   if (!existsSync(path)) return;
 
@@ -312,6 +319,41 @@ export function getThreadCapabilityConfig(): ThreadCapabilityConfig {
     forkThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_FORK),
     archiveThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_ARCHIVE),
     unarchiveThread: parseBoolean(process.env.CODEXCLAW_VERIFIED_THREAD_UNARCHIVE)
+  };
+}
+
+export function getPluginConfig(): PluginConfig {
+  loadDotenv();
+
+  const paths = getRuntimePathConfig();
+  const tokenFile = process.env.CODEXCLAW_CODEX_TOKEN_FILE?.trim()
+    ? resolveStatePath(paths.stateDir, process.env.CODEXCLAW_CODEX_TOKEN_FILE.trim(), "codex.token")
+    : resolve(paths.stateDir, "codex.token");
+  const codexHome = process.env.CODEX_HOME?.trim()
+    ? resolveHomePath(process.env.CODEX_HOME.trim())
+    : resolveHomePath("~/.codex");
+  const pluginDirs = parseCsv(process.env.CODEXCLAW_PLUGIN_DIRS).map((dir) => resolveAgainst(paths.workspaceRoot, dir));
+  const deniedRoots = [
+    paths.stateDir,
+    paths.dbPath,
+    tokenFile,
+    codexHome,
+    resolveHomePath("~/.codex"),
+    resolve(paths.workspaceRoot, ".git"),
+    resolve(paths.workspaceRoot, ".codex"),
+    resolve(paths.workspaceRoot, ".codexclaw")
+  ].map((path) => normalizePath(resolveExistingPathTarget(path)));
+
+  return {
+    pluginDirs,
+    maxDescriptorBytes: parseBoundedInteger(
+      "CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES",
+      64 * 1024,
+      1,
+      1024 * 1024
+    ),
+    workspaceRoot: paths.workspaceRoot,
+    deniedRoots
   };
 }
 

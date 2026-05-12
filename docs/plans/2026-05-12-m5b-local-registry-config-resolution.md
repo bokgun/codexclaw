@@ -336,3 +336,6 @@ Expected result:
   implementation context.
 - 2026-05-12: Addressed review findings for duplicate MCP server names,
   persisted version mismatch, and realpath-based symlink path checks.
+- 2026-05-12: Implemented local plugin config parsing, descriptor registry,
+  duplicate rejection, enablement persistence, in-memory MCP projection, and
+  focused M5b tests.

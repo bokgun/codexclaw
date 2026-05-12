@@ -89,6 +89,10 @@ export interface PluginToolSummary {
 export interface PluginValidationDiagnostic {
   path: string;
   code:
+    | "read_error"
+    | "invalid_json"
+    | "path_denied"
+    | "missing"
     | "invalid_type"
     | "unknown_field"
     | "invalid_schema_version"
@@ -112,3 +116,52 @@ export type PluginDescriptorValidationResult =
       ok: false;
       diagnostics: readonly PluginValidationDiagnostic[];
     };
+
+export type LocalPluginStatus =
+  | "available"
+  | "invalid"
+  | "duplicate"
+  | "version_mismatch"
+  | "missing_env";
+
+export interface LocalPluginRegistry {
+  entries: readonly LocalPluginRegistryEntry[];
+  diagnostics: readonly PluginValidationDiagnostic[];
+}
+
+export interface LocalPluginRegistryEntry {
+  id: string;
+  version?: string;
+  sourcePath: string;
+  sourceLabel: string;
+  summary?: PluginDescriptorSummary;
+  descriptor?: ValidatedPluginDescriptor;
+  enabled: boolean;
+  status: LocalPluginStatus;
+  diagnostics: readonly PluginValidationDiagnostic[];
+  missingEnvNames: readonly string[];
+}
+
+export interface AppServerMcpConfigProjection {
+  mcpServers: readonly AppServerMcpServerConfig[];
+  omitted: readonly PluginProjectionOmission[];
+}
+
+export interface AppServerMcpServerConfig {
+  serverName: string;
+  command: string;
+  args: readonly string[];
+  env: readonly PluginRuntimeEnvVar[];
+}
+
+export interface PluginRuntimeEnvVar {
+  name: string;
+  value: string;
+}
+
+export interface PluginProjectionOmission {
+  pluginId: string;
+  sourceLabel: string;
+  reason: "disabled" | "invalid" | "duplicate" | "version_mismatch" | "missing_env";
+  missingEnvNames: readonly string[];
+}

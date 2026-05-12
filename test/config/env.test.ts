@@ -6,6 +6,7 @@ import {
   getCodexConnectionConfig,
   getDiscordConfig,
   getFileDeliveryConfig,
+  getPluginConfig,
   getRuntimePathConfig,
   getTelegramConfig,
   getWikiConfig,
@@ -33,6 +34,8 @@ const ISOLATED_CODEXCLAW_ENV_KEYS = [
   "CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS",
   "CODEXCLAW_FILE_DELIVERY_MAX_BYTES",
   "CODEXCLAW_FILE_DELIVERY_MAX_FILES",
+  "CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES",
+  "CODEXCLAW_PLUGIN_DIRS",
   "CODEXCLAW_STATE_DIR",
   "CODEXCLAW_TELEGRAM_ALLOWED_USER_IDS",
   "CODEXCLAW_TELEGRAM_API_BASE_URL",
@@ -378,6 +381,37 @@ describe("File delivery config", () => {
     process.env.CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS = stateDir;
 
     expect(() => getFileDeliveryConfig()).toThrow("CODEXCLAW_FILE_DELIVERY_ALLOWED_ROOTS");
+  });
+});
+
+describe("Plugin config", () => {
+  isolatedTest("parses local plugin dirs and descriptor byte bounds", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    const codexHome = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-codex-home-")));
+    const pluginDir = realpathSync(mkdtempSync(join(workspace, "plugins-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEX_HOME = codexHome;
+    process.env.CODEXCLAW_PLUGIN_DIRS = `plugins-missing,${pluginDir}`;
+    process.env.CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES = "4096";
+
+    const config = getPluginConfig();
+
+    expect(config.pluginDirs).toEqual([join(workspace, "plugins-missing"), pluginDir]);
+    expect(config.maxDescriptorBytes).toBe(4096);
+    expect(config.workspaceRoot).toBe(workspace);
+    expect(config.deniedRoots).toEqual(expect.arrayContaining([stateDir, codexHome, join(workspace, ".git"), join(workspace, ".codex")]));
+  });
+
+  isolatedTest("bounds plugin descriptor size config", () => {
+    const workspace = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-workspace-")));
+    const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "codexclaw-state-")));
+    process.env.CODEXCLAW_WORKSPACE_ROOT = workspace;
+    process.env.CODEXCLAW_STATE_DIR = stateDir;
+    process.env.CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES = "0";
+
+    expect(() => getPluginConfig()).toThrow("CODEXCLAW_PLUGIN_DESCRIPTOR_MAX_BYTES");
   });
 });
 

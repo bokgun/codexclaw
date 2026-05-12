@@ -16,7 +16,7 @@ import type {
   UserKey
 } from "../runtime/types.js";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 interface ThreadRow {
   user_key: string;
@@ -68,6 +68,14 @@ interface PrefRow {
   user_key: string;
   pref_key: PrefKey;
   pref_value: string;
+  updated_at: string;
+}
+
+interface PluginEnablementRow {
+  plugin_id: string;
+  version: string | null;
+  enabled: number;
+  created_at: string;
   updated_at: string;
 }
 
@@ -131,6 +139,20 @@ export interface CreateTaskInput {
   timeoutSec?: number;
   dedupePolicy?: TaskDedupePolicy;
   nextRunAt: TimestampIso;
+}
+
+export interface PluginEnablementState {
+  pluginId: string;
+  version?: string;
+  enabled: boolean;
+  createdAt: TimestampIso;
+  updatedAt: TimestampIso;
+}
+
+export interface SetPluginEnablementInput {
+  pluginId: string;
+  version?: string;
+  enabled: boolean;
 }
 
 export class PointerStore {
@@ -481,7 +503,38 @@ export class PointerStore {
     return this.db.query(`delete from prefs where user_key = ? and pref_key = ?`).run(userKey, key).changes > 0;
   }
 
-  schemaColumns(tableName: "threads" | "pending_approvals" | "tasks" | "prefs"): string[] {
+  setPluginEnablement(input: SetPluginEnablementInput): PluginEnablementState {
+    const pluginId = normalizePluginIdentity(input.pluginId, "plugin id");
+    const version = input.version ? normalizePluginIdentity(input.version, "plugin version") : undefined;
+    const now = new Date().toISOString();
+    this.db
+      .query(
+        `insert into plugin_enablement (plugin_id, version, enabled, created_at, updated_at)
+         values (?, ?, ?, ?, ?)
+         on conflict(plugin_id) do update set
+           version = excluded.version,
+           enabled = excluded.enabled,
+           updated_at = excluded.updated_at`
+      )
+      .run(pluginId, version ?? null, input.enabled ? 1 : 0, now, now);
+    return this.requirePluginEnablement(pluginId);
+  }
+
+  getPluginEnablement(pluginId: string): PluginEnablementState | undefined {
+    const row = this.db
+      .query<PluginEnablementRow, [string]>(`select * from plugin_enablement where plugin_id = ?`)
+      .get(pluginId);
+    return row ? pluginEnablementFromRow(row) : undefined;
+  }
+
+  listPluginEnablement(): PluginEnablementState[] {
+    return this.db
+      .query<PluginEnablementRow, []>(`select * from plugin_enablement order by plugin_id asc`)
+      .all()
+      .map(pluginEnablementFromRow);
+  }
+
+  schemaColumns(tableName: "threads" | "pending_approvals" | "tasks" | "prefs" | "plugin_enablement"): string[] {
     return this.db
       .query<{ name: string }, []>(`pragma table_info(${tableName})`)
       .all()
@@ -566,6 +619,14 @@ export class PointerStore {
           updated_at text not null,
           primary key (user_key, pref_key)
         );
+
+        create table if not exists plugin_enablement (
+          plugin_id text primary key,
+          version text,
+          enabled integer not null default 0 check(enabled in (0, 1)),
+          created_at text not null,
+          updated_at text not null
+        );
       `);
 
       const threadColumns = this.schemaColumns("threads");
@@ -627,6 +688,12 @@ export class PointerStore {
     const pref = this.listPrefs(userKey).find((record) => record.key === key);
     if (!pref) throw new Error(`Unknown preference '${key}' for ${userKey}`);
     return pref;
+  }
+
+  private requirePluginEnablement(pluginId: string): PluginEnablementState {
+    const state = this.getPluginEnablement(pluginId);
+    if (!state) throw new Error(`Unknown plugin enablement '${pluginId}'`);
+    return state;
   }
 
   private clearActive(userKey: UserKey): void {
@@ -725,8 +792,24 @@ function prefFromRow(row: PrefRow): PrefRecord {
   };
 }
 
+function pluginEnablementFromRow(row: PluginEnablementRow): PluginEnablementState {
+  return {
+    pluginId: row.plugin_id,
+    version: row.version ?? undefined,
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function normalizePrefValue(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200);
+}
+
+function normalizePluginIdentity(value: string, label: string): string {
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 120);
+  if (!normalized) throw new Error(`Plugin ${label} must not be empty.`);
+  return normalized;
 }
 
 export function countActiveThreads(store: PointerStore, userKey: UserKey): number {

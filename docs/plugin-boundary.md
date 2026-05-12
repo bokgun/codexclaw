@@ -70,6 +70,13 @@ names, network/provider metadata, and bounded display summaries without reading
 plugin descriptors from disk, storing enablement state, or starting plugin
 processes.
 
+M5b adds local registry and config resolution. codexclaw discovers only
+explicit local `codexclaw-plugin.json` files from configured plugin
+directories, keeps plugins disabled by default, stores enablement as descriptor
+identity plus timestamps, and builds an in-memory app-server MCP config
+projection for enabled descriptors whose required env names are present. Env
+values are projected only from allowlisted names and are not written to SQLite.
+
 ## OpenCandle Spike Boundary
 
 The OpenCandle MCP spike is intentionally narrower than a production plugin:

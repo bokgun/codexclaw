@@ -127,6 +127,16 @@ Exit criteria:
 - codexclaw state stores only descriptor identity, enablement, and prefs;
 - no raw tool call data is persisted.
 
+Implemented in:
+
+- `src/config/env.ts`;
+- `src/plugins/registry.ts`;
+- `src/plugins/types.ts`;
+- `src/store/pointer-store.ts`;
+- `test/config/env.test.ts`;
+- `test/plugins/plugin-registry.test.ts`;
+- `test/store/pointer-store.test.ts`.
+
 ### M5c - Process Supervision
 
 Goal: supervise local MCP plugin server processes with clear lifecycle and

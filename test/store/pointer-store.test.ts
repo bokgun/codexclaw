@@ -429,6 +429,48 @@ describe("PointerStore", () => {
     expect(store.unsetPref("user:prefs", "tone")).toBe(true);
     expect(store.listPrefs("user:prefs").map((pref) => pref.key)).toEqual(["lang"]);
   });
+
+  test("stores plugin enablement identity only", () => {
+    const path = tempDbPath();
+    const store = new PointerStore(path);
+
+    const enabled = store.setPluginEnablement({ pluginId: "opencandle", version: "0.1.0", enabled: true });
+
+    expect(enabled).toMatchObject({
+      pluginId: "opencandle",
+      version: "0.1.0",
+      enabled: true
+    });
+    expect(store.getPluginEnablement("opencandle")?.enabled).toBe(true);
+    expect(store.listPluginEnablement().map((item) => item.pluginId)).toEqual(["opencandle"]);
+    expect(store.schemaColumns("plugin_enablement")).toEqual([
+      "plugin_id",
+      "version",
+      "enabled",
+      "created_at",
+      "updated_at"
+    ]);
+
+    const columns = store.schemaColumns("plugin_enablement");
+    for (const forbidden of ["body", "content", "command", "args", "output", "env_value", "approval_history"]) {
+      expect(columns.some((column) => column.includes(forbidden))).toBe(false);
+    }
+    store.close();
+
+    const reopened = new PointerStore(path);
+    expect(reopened.getPluginEnablement("opencandle")).toMatchObject({
+      pluginId: "opencandle",
+      version: "0.1.0",
+      enabled: true
+    });
+    reopened.setPluginEnablement({ pluginId: "opencandle", enabled: false });
+    expect(reopened.getPluginEnablement("opencandle")).toMatchObject({
+      pluginId: "opencandle",
+      version: undefined,
+      enabled: false
+    });
+    reopened.close();
+  });
 });
 
 function newStore(): PointerStore {
