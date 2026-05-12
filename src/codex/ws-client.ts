@@ -17,6 +17,10 @@ export interface CodexClientOptions {
   clientName?: string;
   clientTitle?: string;
   clientVersion?: string;
+  capabilities?: {
+    experimentalApi: boolean;
+    optOutNotificationMethods?: string[];
+  };
 }
 
 export interface RpcNotification {
@@ -99,13 +103,21 @@ export class CodexWsClient {
     this.socket.on("close", () => this.handleClose(new Error("Codex WebSocket closed")));
     this.socket.on("error", (error) => this.handleClose(error));
 
-    await this.request("initialize", {
+    const initializeParams: JsonObject = {
       clientInfo: {
         name: this.options.clientName ?? "codexclaw",
         title: this.options.clientTitle ?? "codexclaw",
         version: this.options.clientVersion ?? "0.0.0"
       }
-    });
+    };
+    if (this.options.capabilities) {
+      initializeParams.capabilities = {
+        experimentalApi: this.options.capabilities.experimentalApi,
+        optOutNotificationMethods: this.options.capabilities.optOutNotificationMethods ?? null
+      };
+    }
+
+    await this.request("initialize", initializeParams);
     this.notify("initialized", {});
   }
 

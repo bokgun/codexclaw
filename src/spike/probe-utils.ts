@@ -10,18 +10,34 @@ export interface ProbeClient {
 
 export type ApprovalDecision = "accept" | "decline" | "cancel";
 
-export async function connectProbe(): Promise<ProbeClient> {
+export interface ConnectProbeOptions {
+  experimentalApi?: boolean;
+  clientName?: string;
+  logInbound?: boolean;
+}
+
+export async function connectProbe(options: ConnectProbeOptions = {}): Promise<ProbeClient> {
   const { wsUrl, tokenFile } = getCodexConnectionConfig();
-  const client = new CodexWsClient({ url: wsUrl, tokenFile });
+  const client = new CodexWsClient({
+    url: wsUrl,
+    tokenFile,
+    clientName: options.clientName,
+    capabilities:
+      options.experimentalApi === undefined
+        ? undefined
+        : {
+            experimentalApi: options.experimentalApi
+          }
+  });
   const events: RpcInbound[] = [];
 
   client.onInbound((message) => {
     events.push(message);
-    console.error(formatInbound(message));
+    if (options.logInbound ?? true) console.error(formatInbound(message));
   });
 
   await client.connect();
-  console.error(`[probe] connected url=${wsUrl}`);
+  console.error(`[probe] connected url=${wsUrl} experimentalApi=${options.experimentalApi ?? "omitted"}`);
   return { client, events };
 }
 
