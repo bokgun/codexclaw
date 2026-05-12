@@ -61,6 +61,8 @@ content, Codex diffs, or approval histories.
 
 ### M5a - Descriptor Schema And Security Gate
 
+Status: implemented.
+
 Goal: define the smallest stable plugin descriptor and reject unsafe plugin
 configuration before any process is started.
 
@@ -89,6 +91,13 @@ Exit criteria:
 - valid descriptors can be parsed into metadata-only runtime records;
 - no plugin command is executed by this milestone;
 - `bun run typecheck` and focused tests pass.
+
+Implemented in:
+
+- `src/plugins/types.ts`;
+- `src/plugins/security.ts`;
+- `src/plugins/validation.ts`;
+- `test/plugins/plugin-descriptor.test.ts`.
 
 ### M5b - Local Registry And Config Resolution
 

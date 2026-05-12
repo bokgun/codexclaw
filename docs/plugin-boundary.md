@@ -1,6 +1,6 @@
 # CodexClaw Plugin Boundary
 
-Status: draft policy for MCP-backed plugin spikes.
+Status: draft policy for MCP-backed local plugins.
 
 Date: 2026-05-12
 
@@ -63,6 +63,12 @@ Minimum enablement policy:
   providers;
 - plugin-provided descriptions and schemas are treated as untrusted display
   data and must be bounded before channel rendering.
+
+The M5a descriptor security gate is implemented in `src/plugins`. It validates
+descriptor shape, command paths, argv entries, env declarations, sensitive env
+names, network/provider metadata, and bounded display summaries without reading
+plugin descriptors from disk, storing enablement state, or starting plugin
+processes.
 
 ## OpenCandle Spike Boundary
 

@@ -280,3 +280,5 @@ Expected result:
 ## Review History
 
 - 2026-05-12: Initial M5a implementation plan drafted from the M5 roadmap.
+- 2026-05-12: Implemented descriptor types, validation, security helpers, and
+  focused tests in `src/plugins` and `test/plugins/plugin-descriptor.test.ts`.
