@@ -93,6 +93,20 @@ The managed `CODEX_HOME` must be authenticated explicitly with
 `codex login --device-auth`; codexclaw does not copy Codex auth from a user's
 global home into the managed plugin-supervision home.
 
+M5d adds channel UX for `/plugin list`, `/plugin status <id>`,
+`/plugin enable <id>`, `/plugin enable <id> --confirm`, and
+`/plugin disable <id>`. The UX is channel-neutral text routed through the
+existing CLI, Telegram, and Discord command path after adapter authorization has
+already accepted the inbound message. Enablement is a two-step flow: the first
+enable command renders descriptor status, network/provider metadata, env names,
+missing env names, tool summaries, and fail-closed elicitation policy without
+mutating state; the `--confirm` form persists only plugin id, version, enabled
+flag, and timestamps in codexclaw domain state. Channel responses render env
+names only and do not render env values, raw MCP command args, raw MCP tool
+arguments, raw MCP outputs, conversation bodies, diffs, or approval history.
+After enable/disable, codexclaw requests supervisor reconciliation when
+available, but app-server remains responsible for MCP discovery and invocation.
+
 ## OpenCandle Spike Boundary
 
 The OpenCandle MCP spike is intentionally narrower than a production plugin:

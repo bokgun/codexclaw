@@ -132,7 +132,7 @@ function parseLogLevel(value: string): LogLevel {
   throw new Error("CODEXCLAW_LOG_LEVEL must be one of debug, info, warn, error");
 }
 
-function redactSecretLikeText(value: string): string {
+export function redactSecretLikeText(value: string): string {
   return value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
     .replace(/Bot\s+[A-Za-z0-9._-]+/g, "Bot [redacted]")

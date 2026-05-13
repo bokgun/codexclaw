@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { HostRuntime } from "../../src/runtime/host.js";
@@ -87,6 +87,81 @@ describe("HostRuntime", () => {
     expect(methods).toContain("turn/start");
     expect(methods.indexOf("turn/start")).toBeGreaterThan(methods.indexOf("config/mcpServer/reload"));
   });
+
+  test("wires plugin commands into startup routing", async () => {
+    const pluginRoot = mkdtempSync(join(tmpdir(), "codexclaw-host-plugin-test-"));
+    writeFileSync(join(pluginRoot, "codexclaw-plugin.json"), JSON.stringify(validPluginDescriptor(), null, 2));
+    const env = withRuntimeEnv({ CODEXCLAW_PLUGIN_DIRS: pluginRoot });
+    const store = createPointerStore();
+    const transport = new FakeTransport();
+    const channel = new SingleMessageChannel({
+      id: "msg-1",
+      userKey: "user:1",
+      channel: "cli",
+      text: "/plugin list",
+      receivedAt: "2026-05-07T00:00:00.000Z"
+    });
+    const runtime = new HostRuntime({
+      channel,
+      store,
+      logger: noopLogger,
+      scheduler: false,
+      wiki: false,
+      connectTransport: async () => transport as never
+    });
+
+    try {
+      await runtime.start();
+    } finally {
+      runtime.close();
+      store.close();
+      env.restore();
+    }
+
+    expect(transport.requests.map((request) => request.method)).not.toContain("turn/start");
+    expect(channel.sent.at(-1)?.text).toContain("opencandle");
+  });
+
+  test("reports plugin reconcile warnings while keeping enablement persisted", async () => {
+    const pluginRoot = mkdtempSync(join(tmpdir(), "codexclaw-host-plugin-test-"));
+    writeFileSync(join(pluginRoot, "codexclaw-plugin.json"), JSON.stringify(validPluginDescriptor(), null, 2));
+    const env = withRuntimeEnv({
+      CODEXCLAW_PLUGIN_DIRS: pluginRoot,
+      CODEXCLAW_PLUGIN_SUPERVISION_ENABLED: "true",
+      OPENCANDLE_ROOT: "/tmp/opencandle"
+    });
+    const store = createPointerStore();
+    const transport = new FakeTransport({ failMcpReloadAfter: 1 });
+    const channel = new SingleMessageChannel({
+      id: "msg-1",
+      userKey: "user:1",
+      channel: "cli",
+      text: "/plugin enable opencandle --confirm",
+      receivedAt: "2026-05-07T00:00:00.000Z"
+    }, 10);
+    const runtime = new HostRuntime({
+      channel,
+      store,
+      logger: noopLogger,
+      scheduler: false,
+      wiki: false,
+      connectTransport: async () => transport as never
+    });
+
+    try {
+      await runtime.start();
+      expect(store.getPluginEnablement("opencandle")).toMatchObject({ enabled: true, version: "0.1.0" });
+      expect(channel.sent.at(-1)?.text).toContain("Enabled plugin 'opencandle'.");
+      expect(channel.sent.at(-1)?.text).toContain("Reconcile warning: test mcp reload failure");
+      expect(channel.sent.at(-1)?.text).toContain("OPENCANDLE_ROOT=[OPENCANDLE_ROOT]");
+      expect(channel.sent.at(-1)?.text).toContain("Bearer [redacted]");
+      expect(channel.sent.at(-1)?.text).not.toContain("/tmp/opencandle");
+      expect(channel.sent.at(-1)?.text).not.toContain("secret-token");
+    } finally {
+      runtime.close();
+      env.restore();
+    }
+  });
 });
 
 class FakeTransport {
@@ -96,12 +171,18 @@ class FakeTransport {
   private serverRequestHandlers = new Set<(request: RpcServerRequest) => void>();
   private closeHandlers = new Set<(error?: Error) => void>();
 
-  constructor(private readonly options: { slowMcpReload?: boolean } = {}) {}
+  private mcpReloadCount = 0;
+
+  constructor(private readonly options: { slowMcpReload?: boolean; failMcpReloadAfter?: number } = {}) {}
 
   async request(method: string, params?: JsonValue): Promise<JsonValue> {
     this.requests.push({ method, params });
     if (method === "config/mcpServer/reload") {
+      this.mcpReloadCount += 1;
       if (this.options.slowMcpReload) return new Promise(() => {});
+      if (this.options.failMcpReloadAfter !== undefined && this.mcpReloadCount > this.options.failMcpReloadAfter) {
+        throw new Error("test mcp reload failure OPENCANDLE_ROOT=/tmp/opencandle Bearer secret-token");
+      }
       return {};
     }
     if (method === "mcpServerStatus/list") return { data: [], nextCursor: null };
@@ -156,14 +237,19 @@ class FakeTransport {
 class SingleMessageChannel implements ChannelAdapter {
   readonly name = "cli" as const;
   readonly approvalResponses = empty<ChannelApprovalResponse>();
+  readonly sent: OutboundMessage[] = [];
 
-  constructor(private readonly inbound: NormalizedMessage) {}
+  constructor(
+    private readonly inbound: NormalizedMessage,
+    private readonly delayMs = 0
+  ) {}
 
   get receive(): AsyncIterable<NormalizedMessage> {
-    return single(this.inbound);
+    return single(this.inbound, this.delayMs);
   }
 
-  async send(_message: OutboundMessage): Promise<{}> {
+  async send(message: OutboundMessage): Promise<{}> {
+    this.sent.push(message);
     return {};
   }
 
@@ -179,11 +265,16 @@ const noopLogger: RuntimeLogger = {
   error() {}
 };
 
-async function* single<T>(value: T): AsyncIterable<T> {
+async function* single<T>(value: T, delayMs = 0): AsyncIterable<T> {
+  if (delayMs > 0) await delay(delayMs);
   yield value;
 }
 
 async function* empty<T>(): AsyncIterable<T> {}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function withRuntimeEnv(extra: Record<string, string> = {}): { restore(): void } {
   const previous = {
@@ -194,7 +285,8 @@ function withRuntimeEnv(extra: Record<string, string> = {}): { restore(): void }
     CODEXCLAW_PLUGIN_SUPERVISION_ENABLED: process.env.CODEXCLAW_PLUGIN_SUPERVISION_ENABLED,
     CODEXCLAW_PLUGIN_DIRS: process.env.CODEXCLAW_PLUGIN_DIRS,
     CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME: process.env.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME,
-    CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS: process.env.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS
+    CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS: process.env.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS,
+    OPENCANDLE_ROOT: process.env.OPENCANDLE_ROOT
   };
   const root = mkdtempSync(join(tmpdir(), "codexclaw-host-test-"));
   process.env.CODEXCLAW_WORKSPACE_ROOT = join(root, "workspace");
@@ -213,6 +305,28 @@ function withRuntimeEnv(extra: Record<string, string> = {}): { restore(): void }
       restoreEnv("CODEXCLAW_PLUGIN_DIRS", previous.CODEXCLAW_PLUGIN_DIRS);
       restoreEnv("CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME", previous.CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME);
       restoreEnv("CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS", previous.CODEXCLAW_PLUGIN_SUPERVISOR_STARTUP_TIMEOUT_MS);
+      restoreEnv("OPENCANDLE_ROOT", previous.OPENCANDLE_ROOT);
+    }
+  };
+}
+
+function validPluginDescriptor(): unknown {
+  return {
+    schemaVersion: 1,
+    id: "opencandle",
+    displayName: "OpenCandle",
+    version: "0.1.0",
+    mcp: {
+      serverName: "opencandle",
+      command: "/usr/local/bin/bun",
+      args: ["server.ts"],
+      env: [{ name: "OPENCANDLE_ROOT", required: true }]
+    },
+    tools: [{ name: "get_fear_greed" }],
+    security: {
+      network: "declared",
+      providers: ["alternative.me"],
+      envAllowlist: ["OPENCANDLE_ROOT"]
     }
   };
 }

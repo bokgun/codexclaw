@@ -14,7 +14,7 @@ import {
   getThreadCapabilityConfig,
   getWikiConfig
 } from "../config/env.js";
-import { PluginSupervisor } from "../plugins/index.js";
+import { createPluginCommandService, PluginSupervisor } from "../plugins/index.js";
 import { createPointerStore, type PointerStore } from "../store/pointer-store.js";
 import { createSkillInspectionService } from "../skills/index.js";
 import { ThreadManager } from "../thread/thread-manager.js";
@@ -104,6 +104,7 @@ export class HostRuntime {
       fileDeliveryCollector: new FileDeliveryCollector()
     });
     const runtimePaths = getRuntimePathConfig();
+    const pluginConfig = getPluginConfig();
     const threads = new ThreadManager(this.store, this.codex, { workspaceRoot: runtimePaths.workspaceRoot });
     const wikiService = this.hostOptions.wiki === false ? undefined : this.hostOptions.wiki ?? createConfiguredWikiService();
     this.router = new Router(threads, this.codex, sink, {
@@ -113,6 +114,12 @@ export class HostRuntime {
       minScheduleIntervalMs: this.schedulerOptions === false ? undefined : this.schedulerOptions.minScheduleIntervalMs,
       defaultTaskRetry: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultRetry,
       defaultTaskTimeoutSec: this.schedulerOptions === false ? undefined : this.schedulerOptions.defaultTimeoutSec,
+      plugins: createPluginCommandService({
+        pluginConfig,
+        store: this.store,
+        supervisorSnapshot: () => this.pluginSupervisor?.snapshot(),
+        reconcile: () => this.pluginSupervisor?.reconcileForCommand("manual")
+      }),
       skills: createSkillInspectionService(this.codex, {
         workspaceRoot: runtimePaths.workspaceRoot,
         activeChannel: this.channel.name,
@@ -161,7 +168,7 @@ export class HostRuntime {
         ? undefined
         : new BranchSuggestionCoordinator(this.store, sink, this.branchSuggestionOptions);
     this.pluginSupervisor = new PluginSupervisor({
-      pluginConfig: getPluginConfig(),
+      pluginConfig,
       supervisorConfig: getPluginSupervisorEnvConfig(),
       store: this.store,
       codex: this.codex,

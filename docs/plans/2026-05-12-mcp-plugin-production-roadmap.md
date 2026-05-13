@@ -187,6 +187,8 @@ Implemented in:
 
 ### M5d - Channel UX
 
+Status: implemented.
+
 Goal: expose plugin inspection and enablement through personal channel UX
 without hiding security-relevant facts from the user.
 
@@ -215,6 +217,18 @@ Exit criteria:
 - enablement is explicit and auditable through codexclaw domain state;
 - network/provider use is visible before enablement;
 - channel responses do not include raw MCP arguments or outputs.
+
+Implemented in:
+
+- `src/channel/commands.ts`;
+- `src/channel/types.ts`;
+- `src/plugins/commands.ts`;
+- `src/runtime/router.ts`;
+- `src/runtime/host.ts`;
+- `test/channel/commands.test.ts`;
+- `test/plugins/plugin-commands.test.ts`;
+- `test/runtime/router.test.ts`;
+- `test/runtime/host.test.ts`.
 
 ### M5e - OpenCandle Production Plugin Slice
 

@@ -50,12 +50,18 @@ export interface DiscordSendMessageParams {
   content: string;
   message_reference?: { message_id: string; channel_id?: string };
   components?: readonly DiscordActionRow[];
+  allowed_mentions?: DiscordAllowedMentions;
 }
 
 export interface DiscordWebhookMessageParams {
   content?: string;
   flags?: number;
   components?: readonly DiscordActionRow[];
+  allowed_mentions?: DiscordAllowedMentions;
+}
+
+export interface DiscordAllowedMentions {
+  parse: readonly string[];
 }
 
 export interface DiscordMessage {
@@ -144,6 +150,7 @@ export interface DiscordInteractionCallbackResponse {
     custom_id?: string;
     title?: string;
     components?: readonly DiscordActionRow[];
+    allowed_mentions?: DiscordAllowedMentions;
   };
 }
 
@@ -294,6 +301,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     const sent = await this.api.sendMessage({
       channel_id: channelId,
       content: formatApprovalPrompt(request),
+      allowed_mentions: noDiscordMentions(),
       components: [buttonRow([
         { type: 2, label: "Approve", custom_id: approvalCustomId(key, "approve"), style: 3 },
         { type: 2, label: "Reject", custom_id: approvalCustomId(key, "reject"), style: 4 },
@@ -325,6 +333,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     const sent = await this.api.sendMessage({
       channel_id: channelId,
       content: formatBranchSuggestionPrompt(request.text),
+      allowed_mentions: noDiscordMentions(),
       components: [buttonRow([
         { type: 2, label: "New thread", custom_id: branchCustomId(key, "new"), style: 1 },
         { type: 2, label: "Continue", custom_id: branchCustomId(key, "continue"), style: 2 }
@@ -355,7 +364,8 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     if (!this.isAllowedUser(author.id)) {
       await this.api.sendMessage({
         channel_id: message.channel_id,
-        content: "This Discord user is not allowed to use this codexclaw host."
+        content: "This Discord user is not allowed to use this codexclaw host.",
+        allowed_mentions: noDiscordMentions()
       });
       return;
     }
@@ -366,7 +376,8 @@ export class DiscordChannelAdapter implements ChannelAdapter {
       await this.api.sendMessage({
         channel_id: message.channel_id,
         content:
-          "That was received as normal Discord message text, not a signed app command. Use a registered Discord slash command, or send a normal prompt without a leading slash."
+          "That was received as normal Discord message text, not a signed app command. Use a registered Discord slash command, or send a normal prompt without a leading slash.",
+        allowed_mentions: noDiscordMentions()
       });
       return;
     }
@@ -597,20 +608,22 @@ export class DiscordChannelAdapter implements ChannelAdapter {
     if (matches.length > 1) {
       await this.api.sendMessage({
         channel_id: message.channel_id,
-        content: "Multiple approvals are pending here. Use the buttons on the approval message."
+        content: "Multiple approvals are pending here. Use the buttons on the approval message.",
+        allowed_mentions: noDiscordMentions()
       });
       return true;
     }
     const pending = matches[0]!;
     if (this.isExpired(pending.request.expiresAt)) {
       this.pendingApprovals.delete(pending.key);
-      await this.api.sendMessage({ channel_id: message.channel_id, content: "Approval expired." });
+      await this.api.sendMessage({ channel_id: message.channel_id, content: "Approval expired.", allowed_mentions: noDiscordMentions() });
       return true;
     }
     if (parsed.decision === "modify" && !parsed.modifyText) {
       await this.api.sendMessage({
         channel_id: message.channel_id,
-        content: "Usage: `3 <instruction>` or `:modify <instruction>`."
+        content: "Usage: `3 <instruction>` or `:modify <instruction>`.",
+        allowed_mentions: noDiscordMentions()
       });
       return true;
     }
@@ -822,6 +835,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
       type: 4,
       data: {
         content,
+        allowed_mentions: noDiscordMentions(),
         flags: ephemeral ? 64 : undefined
       }
     });
@@ -891,6 +905,7 @@ export class DiscordChannelAdapter implements ChannelAdapter {
       const sent = await this.api.sendMessage({
         channel_id: channelId,
         content: chunk,
+        allowed_mentions: noDiscordMentions(),
         message_reference: replyTo ? { message_id: replyTo, channel_id: channelId } : undefined
       });
       first ??= discordMessageId(sent.channel_id, sent.id);
@@ -1026,6 +1041,10 @@ function formatSlashCommand(command: string, options: readonly DiscordCommandOpt
   return args ? `/${command} ${args}` : `/${command}`;
 }
 
+function noDiscordMentions(): DiscordAllowedMentions {
+  return { parse: [] };
+}
+
 function normalizeDiscordTextCommandAlias(text: string): string {
   return text.replace(/^:([a-z][a-z0-9_-]*)(?=\s|$)/i, "/$1");
 }
@@ -1033,8 +1052,15 @@ function normalizeDiscordTextCommandAlias(text: string): string {
 function flattenCommandOptions(options: readonly DiscordCommandOption[]): string[] {
   const result: string[] = [];
   for (const option of options) {
+    if (option.options) {
+      result.push(option.name, ...flattenCommandOptions(option.options));
+      continue;
+    }
+    if (typeof option.value === "boolean") {
+      if (option.value) result.push(`--${option.name}`);
+      continue;
+    }
     if (option.value !== undefined) result.push(String(option.value));
-    if (option.options) result.push(...flattenCommandOptions(option.options));
   }
   return result;
 }

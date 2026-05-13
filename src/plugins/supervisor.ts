@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
 import type { McpServerStatusListResponse, McpServerStatusSummary } from "../codex/runtime-client.js";
 import type { PluginConfig, PluginSupervisorEnvConfig } from "../config/env.js";
-import type { RuntimeLogger } from "../runtime/log.js";
+import { redactSecretLikeText, type RuntimeLogger } from "../runtime/log.js";
 import type { RuntimeEvent } from "../runtime/types.js";
 import type { PointerStore } from "../store/pointer-store.js";
 import { discoverLocalPluginRegistry, projectAppServerMcpConfig } from "./registry.js";
@@ -81,12 +81,18 @@ export class PluginSupervisor {
   }
 
   reconcile(reason: ReconcileReason = "manual"): void {
-    if (!this.options.supervisorConfig.enabled || this.closed || this.reconcileInFlight) return;
+    void this.reconcileForCommand(reason);
+  }
 
+  async reconcileForCommand(reason: ReconcileReason = "manual"): Promise<string | undefined> {
+    if (!this.options.supervisorConfig.enabled || this.closed) return undefined;
+    if (this.reconcileInFlight) return "plugin supervisor reconcile already in progress";
     this.reconcileInFlight = true;
-    void this.reconcileNow(reason).finally(() => {
+    try {
+      return await this.reconcileNow(reason);
+    } finally {
       this.reconcileInFlight = false;
-    });
+    }
   }
 
   handleRuntimeEvent(event: RuntimeEvent): void {
@@ -109,7 +115,7 @@ export class PluginSupervisor {
     this.backoffTimer = undefined;
   }
 
-  private async reconcileNow(reason: ReconcileReason): Promise<void> {
+  private async reconcileNow(reason: ReconcileReason): Promise<string | undefined> {
     const registry = discoverLocalPluginRegistry({
       config: this.options.pluginConfig,
       store: this.options.store,
@@ -135,9 +141,11 @@ export class PluginSupervisor {
       this.applyObservedStatus(statusList, now);
       this.restartCount = 0;
       if (reason !== "runtime_event") this.options.logger?.info("plugin_supervisor_reconciled", summarizeProjection(projection));
+      return undefined;
     } catch (error) {
-      this.markProjectionFailure(error);
+      const summary = this.markProjectionFailure(error, projection);
       this.scheduleBackoff();
+      return summary;
     }
   }
 
@@ -187,8 +195,8 @@ export class PluginSupervisor {
     }
   }
 
-  private markProjectionFailure(error: unknown): void {
-    const summary = sanitizeDisplayString(error instanceof Error ? error.message : String(error), this.config.diagnosticMaxChars);
+  private markProjectionFailure(error: unknown, projection: AppServerMcpConfigProjection): string {
+    const summary = redactPluginDiagnostic(error instanceof Error ? error.message : String(error), projection, this.config.diagnosticMaxChars);
     const now = this.now().toISOString();
     for (const status of this.statuses.values()) {
       if (status.desired !== "running") continue;
@@ -201,6 +209,7 @@ export class PluginSupervisor {
       });
     }
     this.options.logger?.warn("plugin_supervisor_reconcile_failed", { error: summary });
+    return summary;
   }
 
   private scheduleBackoff(): void {
@@ -221,6 +230,17 @@ export class PluginSupervisor {
   private setStatus(pluginId: string, status: SupervisedPluginStatus): void {
     this.statuses.set(pluginId, status);
   }
+}
+
+function redactPluginDiagnostic(raw: string, projection: AppServerMcpConfigProjection, maxChars: number): string {
+  let redacted = redactSecretLikeText(raw);
+  for (const server of projection.mcpServers) {
+    for (const item of server.env) {
+      if (!item.value) continue;
+      redacted = redacted.split(item.value).join(`[${item.name}]`);
+    }
+  }
+  return sanitizeDisplayString(redacted, maxChars);
 }
 
 export function renderAppServerMcpConfigToml(projection: AppServerMcpConfigProjection): string {

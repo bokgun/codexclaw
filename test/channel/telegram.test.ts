@@ -55,6 +55,21 @@ describe("TelegramChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("rejects unauthorized plugin mutations before routing", async () => {
+    const api = new FakeTelegramApi();
+    const adapter = adapterWith(api);
+    const iterator = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.processUpdate(textUpdate({ updateId: 1, userId: 99, chatId: 99, messageId: 1, text: "/plugin enable opencandle --confirm" }));
+    const routed = await Promise.race([iterator.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.sent.map((message) => message.text)).toEqual([
+      "This Telegram user is not allowed to use this codexclaw host."
+    ]);
+    await adapter.close();
+  });
+
   test("rejects group messages and keeps Telegram v1 personal-only", async () => {
     const api = new FakeTelegramApi();
     const adapter = adapterWith(api);

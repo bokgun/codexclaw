@@ -6,6 +6,7 @@ export interface ParseCommandResult {
 }
 
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 
 export function parseSlashCommand(text: string): ParseCommandResult {
   const trimmed = text.trim();
@@ -127,6 +128,10 @@ export function parseSlashCommand(text: string): ParseCommandResult {
     return { error: "usage: /skills list" };
   }
 
+  if (command === "plugin") {
+    return parsePluginCommand(args);
+  }
+
   if (command === "skill") {
     return { error: "usage: /skills list" };
   }
@@ -137,6 +142,38 @@ export function parseSlashCommand(text: string): ParseCommandResult {
   }
 
   return { error: `unknown command: ${rawCommand}` };
+}
+
+function parsePluginCommand(args: string[]): ParseCommandResult {
+  const action = args[0];
+  if (action === "list") {
+    if (args.length !== 1) return { error: "usage: /plugin list" };
+    return { command: { kind: "plugin", action } };
+  }
+
+  if (action === "status") {
+    const pluginId = args[1];
+    if (args.length !== 2 || !pluginId) return { error: "usage: /plugin status <id>" };
+    if (!isValidPluginCommandId(pluginId)) return { error: "invalid plugin id" };
+    return { command: { kind: "plugin", action, pluginId } };
+  }
+
+  if (action === "enable") {
+    const pluginId = args[1];
+    if (!pluginId || (args.length !== 2 && args.length !== 3)) return { error: "usage: /plugin enable <id> [--confirm]" };
+    if (!isValidPluginCommandId(pluginId)) return { error: "invalid plugin id" };
+    if (args.length === 3 && args[2] !== "--confirm") return { error: "usage: /plugin enable <id> [--confirm]" };
+    return { command: { kind: "plugin", action, pluginId, confirm: args[2] === "--confirm" } };
+  }
+
+  if (action === "disable") {
+    const pluginId = args[1];
+    if (args.length !== 2 || !pluginId) return { error: "usage: /plugin disable <id>" };
+    if (!isValidPluginCommandId(pluginId)) return { error: "invalid plugin id" };
+    return { command: { kind: "plugin", action, pluginId } };
+  }
+
+  return { error: "usage: /plugin list|status|enable|disable" };
 }
 
 function parseThreadCommand(rawCommand: string, args: string[]): ParseCommandResult {
@@ -204,6 +241,10 @@ function looksLikeCronParts(parts: string[]): boolean {
 
 export function isValidThreadLabel(label: string): boolean {
   return LABEL_PATTERN.test(label);
+}
+
+function isValidPluginCommandId(pluginId: string): boolean {
+  return PLUGIN_ID_PATTERN.test(pluginId) && !pluginId.includes("..");
 }
 
 function parseWikiIngestArgs(args: string[]):

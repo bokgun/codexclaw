@@ -156,6 +156,71 @@ describe("DiscordChannelAdapter", () => {
     await adapter.close();
   });
 
+  test("normalizes signed plugin subcommand interactions with confirmation flags", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const iterator = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.processInteraction(interaction({
+      type: 2,
+      id: "i-plugin",
+      userId: "42",
+      channelId: "100",
+      data: {
+        name: "plugin",
+        options: [
+          {
+            name: "enable",
+            type: 1,
+            options: [
+              { name: "id", type: 3, value: "opencandle" },
+              { name: "confirm", type: 5, value: true }
+            ]
+          }
+        ]
+      }
+    }));
+    const next = await iterator.next();
+
+    expect(api.callbacks).toEqual([{ id: "i-plugin", token: "token-i-plugin", response: { type: 5, data: { flags: 64 } } }]);
+    expect(next.value).toMatchObject({
+      id: "discord:interaction:i-plugin",
+      userKey: "discord:42",
+      channel: "discord",
+      text: "/plugin enable opencandle --confirm",
+      channelThreadKey: "discord:100"
+    });
+    await adapter.close();
+  });
+
+  test("rejects unauthorized plugin interactions before routing", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+    const iterator = adapter.receive[Symbol.asyncIterator]();
+
+    await adapter.processInteraction(interaction({
+      type: 2,
+      id: "i-denied-plugin",
+      userId: "99",
+      channelId: "100",
+      data: {
+        name: "plugin",
+        options: [{ name: "disable", type: 1, options: [{ name: "id", type: 3, value: "opencandle" }] }]
+      }
+    }));
+    const routed = await Promise.race([iterator.next(), delay(10).then(() => "none" as const)]);
+
+    expect(routed).toBe("none");
+    expect(api.callbacks).toEqual([
+      {
+        id: "i-denied-plugin",
+        token: "token-i-denied-plugin",
+        response: { type: 4, data: { content: "This Discord user is not allowed.", flags: 64, allowed_mentions: { parse: [] } } }
+      }
+    ]);
+    await adapter.close();
+  });
+
   test("coalesces deltas and chunks long outbound messages", async () => {
     const api = new FakeDiscordApi();
     const adapter = adapterWith(api, { deltaFlushMs: 10_000 });
@@ -167,6 +232,20 @@ describe("DiscordChannelAdapter", () => {
     expect(api.sent[0]?.content).toBe("Hello");
     expect(api.sent.slice(1)).toHaveLength(3);
     expect(api.sent.every((message) => message.content.length <= 1900)).toBe(true);
+    await adapter.close();
+  });
+
+  test("disables Discord mention parsing for rendered channel text", async () => {
+    const api = new FakeDiscordApi();
+    const adapter = adapterWith(api);
+
+    await adapter.send({ kind: "text", channel: "discord", userKey: "discord:42", channelThreadKey: "discord:100", text: "@everyone <@42>" });
+
+    expect(api.sent.at(-1)).toMatchObject({
+      channel_id: "100",
+      content: "@everyone <@42>",
+      allowed_mentions: { parse: [] }
+    });
     await adapter.close();
   });
 
@@ -206,7 +285,7 @@ describe("DiscordChannelAdapter", () => {
       decision: "approve",
       channelThreadKey: "discord:100"
     });
-    expect(api.callbacks.at(-1)?.response).toEqual({ type: 4, data: { content: "Approved.", flags: 64 } });
+    expect(api.callbacks.at(-1)?.response).toEqual({ type: 4, data: { content: "Approved.", flags: 64, allowed_mentions: { parse: [] } } });
     await adapter.close();
   });
 
@@ -235,7 +314,7 @@ describe("DiscordChannelAdapter", () => {
     const routed = await Promise.race([approvals.next(), delay(10).then(() => "none" as const)]);
 
     expect(routed).toBe("none");
-    expect(api.callbacks.at(-1)?.response).toEqual({ type: 4, data: { content: "Approval expired.", flags: 64 } });
+    expect(api.callbacks.at(-1)?.response).toEqual({ type: 4, data: { content: "Approval expired.", flags: 64, allowed_mentions: { parse: [] } } });
     await adapter.close();
   });
 

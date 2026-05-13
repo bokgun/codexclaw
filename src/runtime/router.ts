@@ -2,6 +2,7 @@ import type { CodexRuntimeClient } from "../codex/runtime-client.js";
 import { attachPrefsToText } from "../codex/input.js";
 import { attachWikiContextToText } from "../wiki/context.js";
 import { parseSchedule } from "./schedule.js";
+import { isValidPluginId, type PluginCommandService } from "../plugins/index.js";
 import type { SkillInspectionService } from "../skills/index.js";
 import type { ThreadManager } from "../thread/thread-manager.js";
 import type { PointerStore } from "../store/pointer-store.js";
@@ -19,6 +20,7 @@ export interface RouterOptions {
   defaultTaskRetry?: number;
   defaultTaskTimeoutSec?: number;
   skills?: SkillInspectionService;
+  plugins?: PluginCommandService;
 }
 
 export interface WikiCommandService {
@@ -360,6 +362,9 @@ export class Router {
       case "/skills":
         await this.handleSkillsCommand(message, args);
         return;
+      case "/plugin":
+        await this.handlePluginCommand(message, args);
+        return;
       case "/skill":
         throw new RoutingError("Usage: /skills list", "invalid_command");
       default:
@@ -563,6 +568,56 @@ export class Router {
     const skills = this.options.skills;
     if (!skills) throw new RoutingError("Skills inspection is not enabled in this runtime.", "capability_unavailable");
     await this.sendText(message, await skills.renderSkillList());
+  }
+
+  private async handlePluginCommand(message: InboundMessage, args: string[]): Promise<void> {
+    const action = args[0];
+    if (action === "list") {
+      if (args.length !== 1) throw new RoutingError("Usage: /plugin list", "invalid_command");
+      const plugins = this.requirePluginCommands();
+      await this.sendText(message, await plugins.list());
+      return;
+    }
+    if (action === "status") {
+      const pluginId = args[1];
+      if (args.length !== 2 || !pluginId) throw new RoutingError("Usage: /plugin status <id>", "invalid_command");
+      this.requireValidPluginId(pluginId);
+      const plugins = this.requirePluginCommands();
+      await this.sendText(message, await plugins.status(pluginId));
+      return;
+    }
+    if (action === "enable") {
+      const pluginId = args[1];
+      if (!pluginId || (args.length !== 2 && args.length !== 3)) {
+        throw new RoutingError("Usage: /plugin enable <id> [--confirm]", "invalid_command");
+      }
+      if (args.length === 3 && args[2] !== "--confirm") {
+        throw new RoutingError("Usage: /plugin enable <id> [--confirm]", "invalid_command");
+      }
+      this.requireValidPluginId(pluginId);
+      const plugins = this.requirePluginCommands();
+      await this.sendText(message, args[2] === "--confirm" ? await plugins.confirmEnable(pluginId) : await plugins.previewEnable(pluginId));
+      return;
+    }
+    if (action === "disable") {
+      const pluginId = args[1];
+      if (args.length !== 2 || !pluginId) throw new RoutingError("Usage: /plugin disable <id>", "invalid_command");
+      this.requireValidPluginId(pluginId);
+      const plugins = this.requirePluginCommands();
+      await this.sendText(message, await plugins.disable(pluginId));
+      return;
+    }
+    throw new RoutingError("Usage: /plugin list|status|enable|disable", "invalid_command");
+  }
+
+  private requirePluginCommands(): PluginCommandService {
+    const plugins = this.options.plugins;
+    if (!plugins) throw new RoutingError("Plugin commands are not enabled in this runtime.", "capability_unavailable");
+    return plugins;
+  }
+
+  private requireValidPluginId(pluginId: string): void {
+    if (!isValidPluginId(pluginId)) throw new RoutingError("Invalid plugin id.", "invalid_command");
   }
 
   private attachPrefs(userKey: string, text: string): string {

@@ -119,4 +119,46 @@ describe("parseSlashCommand", () => {
     expect(parseSlashCommand("/skills use review").error).toBe("usage: /skills list");
     expect(parseSlashCommand("/skill review").error).toBe("usage: /skills list");
   });
+
+  test("parses plugin inspection and enablement command shapes", () => {
+    expect(parseSlashCommand("/plugin list").command).toEqual({ kind: "plugin", action: "list" });
+    expect(parseSlashCommand("/plugin status opencandle").command).toEqual({
+      kind: "plugin",
+      action: "status",
+      pluginId: "opencandle"
+    });
+    expect(parseSlashCommand("/plugin enable opencandle").command).toEqual({
+      kind: "plugin",
+      action: "enable",
+      pluginId: "opencandle",
+      confirm: false
+    });
+    expect(parseSlashCommand("/plugin enable opencandle --confirm").command).toEqual({
+      kind: "plugin",
+      action: "enable",
+      pluginId: "opencandle",
+      confirm: true
+    });
+    expect(parseSlashCommand("/plugin disable opencandle").command).toEqual({
+      kind: "plugin",
+      action: "disable",
+      pluginId: "opencandle"
+    });
+  });
+
+  test("rejects malformed plugin commands", () => {
+    expect(parseSlashCommand("/plugin").error).toBe("usage: /plugin list|status|enable|disable");
+    expect(parseSlashCommand("/plugin install opencandle").error).toBe("usage: /plugin list|status|enable|disable");
+    expect(parseSlashCommand("/plugin list opencandle").error).toBe("usage: /plugin list");
+    expect(parseSlashCommand("/plugin status").error).toBe("usage: /plugin status <id>");
+    expect(parseSlashCommand("/plugin status opencandle extra").error).toBe("usage: /plugin status <id>");
+    expect(parseSlashCommand("/plugin enable").error).toBe("usage: /plugin enable <id> [--confirm]");
+    expect(parseSlashCommand("/plugin enable opencandle --now").error).toBe("usage: /plugin enable <id> [--confirm]");
+    expect(parseSlashCommand("/plugin enable opencandle --confirm extra").error).toBe("usage: /plugin enable <id> [--confirm]");
+    expect(parseSlashCommand("/plugin enable --confirm opencandle").error).toBe("invalid plugin id");
+    expect(parseSlashCommand("/plugin disable").error).toBe("usage: /plugin disable <id>");
+    expect(parseSlashCommand("/plugin disable opencandle extra").error).toBe("usage: /plugin disable <id>");
+    expect(parseSlashCommand("/plugin status ../bad").error).toBe("invalid plugin id");
+    expect(parseSlashCommand("/plugin status OpenCandle").error).toBe("invalid plugin id");
+  });
 });

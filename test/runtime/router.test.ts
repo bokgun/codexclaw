@@ -683,6 +683,73 @@ describe("Router", () => {
     expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: "Usage: /skills list" });
     store.close();
   });
+
+  test("routes plugin commands through the configured plugin service without starting turns", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const plugins = new MockPlugins();
+    const router = new Router(manager(store, codex), codex as never, sink, { plugins });
+
+    await router.receive(message("/plugin list"));
+    await router.receive(message("/plugin status opencandle"));
+    await router.receive(message("/plugin enable opencandle"));
+    await router.receive(message("/plugin enable opencandle --confirm"));
+    await router.receive(message("/plugin disable opencandle"));
+
+    expect(plugins.calls).toEqual([
+      ["list"],
+      ["status", "opencandle"],
+      ["previewEnable", "opencandle"],
+      ["confirmEnable", "opencandle"],
+      ["disable", "opencandle"]
+    ]);
+    expect(codex.turns).toEqual([]);
+    expect(sink.events.map((event) => ("text" in event ? event.text : ""))).toEqual([
+      "plugin list",
+      "plugin status opencandle",
+      "plugin preview opencandle",
+      "plugin enabled opencandle",
+      "plugin disabled opencandle"
+    ]);
+    store.close();
+  });
+
+  test("reports plugin capability and usage errors without starting turns", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const router = new Router(manager(store, codex), codex as never, sink);
+
+    await router.receive(message("/plugin list"));
+    await router.receive(message("/plugin enable opencandle --now"));
+
+    expect(codex.turns).toEqual([]);
+    expect(sink.events.at(-2)).toMatchObject({ kind: "text", text: "Plugin commands are not enabled in this runtime." });
+    expect(sink.events.at(-1)).toMatchObject({ kind: "text", text: "Usage: /plugin enable <id> [--confirm]" });
+    store.close();
+  });
+
+  test("rejects malformed plugin ids before plugin service dispatch", async () => {
+    const store = createPointerStore();
+    const codex = new MockCodex();
+    const sink = new MemorySink();
+    const plugins = new MockPlugins();
+    const router = new Router(manager(store, codex), codex as never, sink, { plugins });
+
+    await router.receive(message("/plugin status ../bad"));
+    await router.receive(message("/plugin enable OpenCandle --confirm"));
+    await router.receive(message("/plugin disable --confirm"));
+
+    expect(plugins.calls).toEqual([]);
+    expect(codex.turns).toEqual([]);
+    expect(sink.events.map((event) => ("text" in event ? event.text : ""))).toEqual([
+      "Invalid plugin id.",
+      "Invalid plugin id.",
+      "Invalid plugin id."
+    ]);
+    store.close();
+  });
 });
 
 class MockCodex {
@@ -864,6 +931,35 @@ class MockWiki {
       findings: [{ severity: "warning", kind: "stale_source_ref", pagePath: "wiki/pages/project.md", message: "source changed" }],
       reportPath: "wiki/lint/latest.md"
     };
+  }
+}
+
+class MockPlugins {
+  calls: Array<[string, string?]> = [];
+
+  async list(): Promise<string> {
+    this.calls.push(["list"]);
+    return "plugin list";
+  }
+
+  async status(pluginId: string): Promise<string> {
+    this.calls.push(["status", pluginId]);
+    return `plugin status ${pluginId}`;
+  }
+
+  async previewEnable(pluginId: string): Promise<string> {
+    this.calls.push(["previewEnable", pluginId]);
+    return `plugin preview ${pluginId}`;
+  }
+
+  async confirmEnable(pluginId: string): Promise<string> {
+    this.calls.push(["confirmEnable", pluginId]);
+    return `plugin enabled ${pluginId}`;
+  }
+
+  async disable(pluginId: string): Promise<string> {
+    this.calls.push(["disable", pluginId]);
+    return `plugin disabled ${pluginId}`;
   }
 }
 
