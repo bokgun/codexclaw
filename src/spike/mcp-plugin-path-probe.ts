@@ -274,6 +274,7 @@ async function startIsolatedAppServer(): Promise<{
         `[mcp_servers.${target.serverName}]`,
         `command = ${tomlString(bunCommand)}`,
         `args = [${tomlString(target.serverPath)}]`,
+        ...targetEnvTomlLines(),
         ""
       ].join("\n"),
       { mode: 0o600 }
@@ -512,6 +513,12 @@ function getFreePort(): Promise<number> {
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function targetEnvTomlLines(): string[] {
+  if (target.id !== "opencandle") return [];
+  const opencandleRoot = process.env.OPENCANDLE_ROOT;
+  return opencandleRoot ? [`env = { OPENCANDLE_ROOT = ${tomlString(opencandleRoot)} }`] : [];
 }
 
 function summarizeError(error: unknown): string {

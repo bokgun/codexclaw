@@ -208,6 +208,19 @@ Observed on 2026-05-12:
 The probe records event counts only. It does not persist conversation text,
 tool arguments, tool output, provider response bodies, or auth material.
 
+Observed again on 2026-05-14 against the M5e production OpenCandle plugin
+server path:
+
+- the probe wrote `OPENCANDLE_ROOT` into the temporary app-server MCP config
+  only for the OpenCandle target;
+- `opencandle` server discovery succeeded;
+- direct diagnostic `mcpServer/tool/call` for `get_fear_greed` succeeded;
+- authenticated normal turn-mediated MCP use completed;
+- two MCP events were observed during the normal turn;
+- `mcpServer/elicitation/request` was received and declined fail-closed;
+- raw MCP arguments, raw tool output, provider response bodies, conversation
+  bodies, and auth material were not recorded by the probe.
+
 ## Storage And Security Boundary
 
 codexclaw-owned logs are limited to method names, bounded MCP shape summaries,

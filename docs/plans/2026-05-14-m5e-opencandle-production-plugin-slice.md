@@ -296,3 +296,8 @@ inspect channel output, plugin status, app-server logs, and codexclaw state
 
 - 2026-05-14: Initial M5e plan drafted from the M5 roadmap, plugin boundary,
   OpenCandle spike findings, and M5a-M5d implementation state.
+- 2026-05-14: Verified the production OpenCandle plugin slice with full
+  automated tests, focused plugin tests, schema verification, direct
+  app-server MCP diagnostic call, and authenticated turn-mediated MCP probe.
+  Channel-level `/plugin` CLI validation remains separately tracked in
+  `docs/M5-plugin-manual-checklist.md`.

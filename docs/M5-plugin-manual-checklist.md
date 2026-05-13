@@ -1,8 +1,8 @@
 # M5 Plugin Manual Checklist
 
-Status: M5e automated implementation checks recorded; authenticated
-turn-mediated OpenCandle validation still requires a local Codex login,
-OpenCandle checkout, and network access.
+Status: M5e automated implementation checks recorded; authenticated isolated
+OpenCandle MCP probe passed. Full channel-level `/plugin` CLI validation is
+still pending.
 
 Date started: 2026-05-14
 
@@ -45,6 +45,19 @@ Automated evidence:
 
 - `bun test test/plugins/opencandle-plugin.test.ts`: passed on 2026-05-14.
 - `bun run typecheck`: passed on 2026-05-14.
+- `bun test`: passed on 2026-05-14.
+- `bun run schema:verify`: passed on 2026-05-14.
+
+Probe evidence:
+
+- `OPENCANDLE_ROOT=/absolute/path/to/OpenCandle bun run spike:opencandle-mcp`:
+  passed on 2026-05-14. The `opencandle` MCP server was discovered and the
+  direct diagnostic `get_fear_greed` call succeeded.
+- `OPENCANDLE_ROOT=/absolute/path/to/OpenCandle CODEXCLAW_MCP_PROBE_COPY_AUTH=1
+  CODEXCLAW_MCP_PROBE_TURN=1 bun run spike:opencandle-mcp`: passed on
+  2026-05-14. The probe copied only `auth.json` into a temporary `CODEX_HOME`,
+  completed a normal turn, observed two MCP events, and declined MCP elicitation
+  fail-closed.
 
 ## Manual Validation
 
