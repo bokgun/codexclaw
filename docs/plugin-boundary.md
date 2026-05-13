@@ -107,17 +107,29 @@ arguments, raw MCP outputs, conversation bodies, diffs, or approval history.
 After enable/disable, codexclaw requests supervisor reconciliation when
 available, but app-server remains responsible for MCP discovery and invocation.
 
-## OpenCandle Spike Boundary
+## OpenCandle Production Slice
 
-The OpenCandle MCP spike is intentionally narrower than a production plugin:
+M5e adds OpenCandle as the first production-style local MCP plugin slice:
 
+- the checked-in descriptor source is
+  `plugins/opencandle/codexclaw-plugin.template.json`;
+- `bun run plugin:materialize:opencandle` writes a local
+  `local-plugins/opencandle/codexclaw-plugin.json` with absolute Bun and server
+  paths;
+- the MCP server entrypoint is `plugins/opencandle/server.ts`;
 - it exposes one tool, `get_fear_greed`;
-- it uses OpenCandle provider code from a local checkout;
+- it uses OpenCandle provider code from an absolute local checkout path named by
+  `OPENCANDLE_ROOT`;
 - it requires network access to the provider used by OpenCandle;
-- it does not introduce a plugin registry;
+- it declares providers `OpenCandle` and `alternative.me`;
+- it allowlists only `OPENCANDLE_ROOT`;
+- it rejects missing `OPENCANDLE_ROOT` without falling back to a
+  developer-specific local path;
 - it does not persist provider responses in codexclaw;
-- it is valid only as an integration-cost measurement.
+- fixture tests cover bounded MCP content and structured content without live
+  network access.
 
-Production OpenCandle support still requires an explicit plugin descriptor,
-enablement UX, provider credential policy, process supervision, and tests around
-bounded output handling.
+The OpenCandle slice remains intentionally narrow. It does not add financial
+advice workflows, the full OpenCandle tool surface, a marketplace, remote
+provider execution, or MCP elicitation UX. Authenticated turn-mediated tool use
+is tracked in `docs/M5-plugin-manual-checklist.md` before M5 is marked complete.

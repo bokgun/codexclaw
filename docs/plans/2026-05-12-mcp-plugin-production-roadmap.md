@@ -232,6 +232,11 @@ Implemented in:
 
 ### M5e - OpenCandle Production Plugin Slice
 
+Status: implemented for the production descriptor, bounded MCP server,
+registry/projection tests, and channel status tests. Authenticated
+turn-mediated manual validation is tracked in
+`docs/M5-plugin-manual-checklist.md` before M5 is marked complete.
+
 Goal: convert the OpenCandle spike into the first production-style local MCP
 plugin using the descriptor, registry, supervision, and channel UX built in
 M5a-M5d.
@@ -259,6 +264,18 @@ Exit criteria:
 - Codex can call the tool during a normal turn;
 - codexclaw logs and state remain metadata-only;
 - failure modes produce actionable user-facing status.
+
+Implemented in:
+
+- generated `local-plugins/opencandle/codexclaw-plugin.json`;
+- `plugins/opencandle/codexclaw-plugin.template.json`;
+- `plugins/opencandle/server.ts`;
+- `plugins/opencandle/README.md`;
+- `scripts/materialize-opencandle-plugin.ts`;
+- `src/spike/mcp-plugin-path-probe.ts`;
+- `test/plugins/opencandle-plugin.test.ts`;
+- `docs/M5-plugin-manual-checklist.md`;
+- `docs/plugin-boundary.md`.
 
 ### M5f - Hardening And Release Documentation
 

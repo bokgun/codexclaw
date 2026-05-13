@@ -281,6 +281,12 @@ private managed MCP config under codexclaw state, requests app-server
 reload/status, observes metadata-only lifecycle status, and does not directly
 spawn plugin commands.
 
+M5e's OpenCandle production plugin slice is implemented as a local MCP
+descriptor template and bounded server under `plugins/opencandle`; the local
+discoverable descriptor is generated with `bun run plugin:materialize:opencandle`.
+Full M5 completion is still gated on the manual authenticated turn-mediated
+validation recorded in `docs/M5-plugin-manual-checklist.md`.
+
 Non-goals:
 
 - plugin marketplace or remote plugin downloads;

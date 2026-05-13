@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "opencandle",
+  "displayName": "OpenCandle",
+  "version": "0.1.0",
+  "description": "OpenCandle market metadata MCP tools.",
+  "mcp": {
+    "serverName": "opencandle",
+    "command": "__CODEXCLAW_BUN_COMMAND__",
+    "args": ["__CODEXCLAW_OPENCANDLE_SERVER__"],
+    "env": [
+      {
+        "name": "OPENCANDLE_ROOT",
+        "required": true,
+        "description": "Absolute path to a local OpenCandle checkout."
+      }
+    ]
+  },
+  "tools": [
+    {
+      "name": "get_fear_greed",
+      "title": "Fear and Greed",
+      "description": "Return the current crypto Fear and Greed index classification."
+    }
+  ],
+  "security": {
+    "network": "declared",
+    "providers": ["OpenCandle", "alternative.me"],
+    "envAllowlist": ["OPENCANDLE_ROOT"]
+  }
+}

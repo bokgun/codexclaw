@@ -551,7 +551,7 @@ function selectTarget(): ProbeTarget {
       serverName: "opencandle",
       serverInfoName: "codexclaw-opencandle-mcp",
       toolName: "get_fear_greed",
-      serverPath: resolve(root, "src/spike/opencandle-mcp-server.ts"),
+      serverPath: resolve(root, "plugins/opencandle/server.ts"),
       directArguments: {},
       malformedArguments: { unexpected: true },
       turnPrompt:

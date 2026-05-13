@@ -72,7 +72,7 @@ codexclaw into a tool execution host.
 
 ## Expected Files And Modules
 
-- `plugins/opencandle/codexclaw-plugin.json`
+- `plugins/opencandle/codexclaw-plugin.template.json`
 - `plugins/opencandle/server.ts` or a small wrapper around the existing spike
   server
 - Optional non-discoverable descriptor template, for example
@@ -80,7 +80,7 @@ codexclaw into a tool execution host.
   needs a local absolute command path generated at setup time
 - Optional setup/materialization helper that writes the generated descriptor to a
   user-owned local plugin directory such as
-  `.codexclaw/plugins/opencandle/codexclaw-plugin.json`
+  `local-plugins/opencandle/codexclaw-plugin.json`
 - `src/spike/opencandle-mcp-server.ts`
 - `src/spike/mcp-plugin-path-probe.ts`
 - `test/plugins/opencandle-plugin.test.ts`
@@ -181,7 +181,7 @@ bounded actionable error before attempting provider import.
      - a checked-in valid `codexclaw-plugin.json` if command validation can be
        satisfied portably; or
      - a checked-in non-discoverable template plus a setup/materialization step
-       that writes `.codexclaw/plugins/opencandle/codexclaw-plugin.json`.
+       that writes `local-plugins/opencandle/codexclaw-plugin.json`.
    - Place the MCP server entrypoint next to the descriptor or add a small
      wrapper that delegates to the existing server module.
    - Ensure the descriptor command and args are explicit and compatible with the

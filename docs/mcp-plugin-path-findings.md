@@ -114,7 +114,9 @@ not require secrets.
 
 ## OpenCandle Server
 
-The OpenCandle spike server is `src/spike/opencandle-mcp-server.ts`.
+The OpenCandle probe now targets the production slice server at
+`plugins/opencandle/server.ts`. The older spike-only server remains under
+`src/spike/opencandle-mcp-server.ts` as historical probe code.
 
 It exposes:
 
@@ -124,10 +126,11 @@ It exposes:
 - provider: OpenCandle `getFearGreedIndex`
 - network provider: yes, OpenCandle currently uses `api.alternative.me`
 
-The server imports OpenCandle provider code from `OPENCANDLE_ROOT`, defaulting
-to `/Users/bokgun/Workspace/OpenCandle`. It is not a production plugin registry
-or stable adapter package. `OPENCANDLE_ROOT` is the only OpenCandle-specific
-environment variable allowlisted by the spike app-server environment.
+The production slice server imports OpenCandle provider code from
+`OPENCANDLE_ROOT`. The value must be an absolute path that resolves to an
+existing local OpenCandle checkout; there is no developer-specific fallback
+path. `OPENCANDLE_ROOT` is the only OpenCandle-specific environment variable
+allowlisted by the descriptor.
 
 ## Current Outcome
 

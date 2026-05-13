@@ -25,6 +25,7 @@
     "spike:dynamic-tool": "bun src/spike/dynamic-tool-probe.ts",
     "spike:mcp-plugin-path": "bun src/spike/mcp-plugin-path-probe.ts",
     "spike:opencandle-mcp": "CODEXCLAW_MCP_PROBE_TARGET=opencandle bun src/spike/mcp-plugin-path-probe.ts",
+    "plugin:materialize:opencandle": "bun scripts/materialize-opencandle-plugin.ts",
     "spike:reconnect": "bun src/spike/reconnect-probe.ts",
     "spike:pointer-store": "bun src/spike/pointer-store-probe.ts",
     "start:codex": "bash scripts/start-codex-app-server.sh"
