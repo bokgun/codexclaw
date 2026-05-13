@@ -18,7 +18,8 @@ Generated descriptor shape:
 - `mcp.args`: absolute path to `plugins/opencandle/server.ts`
 - `mcp.env`: required `OPENCANDLE_ROOT`
 - `security.network`: `declared`
-- `security.providers`: `OpenCandle`, `alternative.me`
+- `tools`: `get_stock_quote`, `search_ticker`, `get_fear_greed`
+- `security.providers`: `OpenCandle`, `Yahoo Finance`, `Alternative.me`
 - `security.envAllowlist`: `OPENCANDLE_ROOT`
 
 Runtime requirements:
@@ -26,7 +27,11 @@ Runtime requirements:
 - `OPENCANDLE_ROOT` must point to a local OpenCandle checkout.
 - `OPENCANDLE_ROOT` must be an absolute path that resolves to an existing
   directory.
-- The server imports `src/providers/fear-greed.ts` from that checkout only when `get_fear_greed` is called.
-- Tests can inject a fixture provider through `createOpenCandleMcpServer({ provider })`; no live network or OpenCandle checkout is required for fixture tests.
+- Run `npm run build` in `OPENCANDLE_ROOT` first; the plugin delegates to
+  `dist/codexclaw/mcp-server.js`.
+- The wrapper calls OpenCandle's adapter handler and emits newline-delimited
+  JSON-RPC for the pinned Codex app-server MCP path.
+- Tests load a fixture adapter module from a temporary OpenCandle-like root; no
+  live network or real OpenCandle checkout is required for unit tests.
 
 The generated descriptor intentionally contains no env values, provider responses, raw tool payloads, or user-specific OpenCandle fallback paths.

@@ -14,6 +14,7 @@ Date started: 2026-05-14
 - [ ] Confirm the managed plugin `CODEX_HOME` is authenticated with
   `codex login --device-auth`.
 - [ ] Confirm `OPENCANDLE_ROOT` points to a local OpenCandle checkout.
+- [ ] Run `npm run build` in `OPENCANDLE_ROOT`.
 - [ ] Confirm network access to the OpenCandle upstream provider is available.
 
 ## Automated Checks
@@ -26,9 +27,10 @@ Date started: 2026-05-14
   absolute Bun and server paths.
 - [x] Descriptor does not contain env values, provider responses, or
   user-specific filesystem paths.
-- [x] OpenCandle plugin declares one tool: `get_fear_greed`.
-- [x] OpenCandle plugin declares network/provider metadata for OpenCandle and
-  `alternative.me`.
+- [x] OpenCandle plugin declares the OpenCandle MCP adapter tools:
+  `get_stock_quote`, `search_ticker`, and `get_fear_greed`.
+- [x] OpenCandle plugin declares network/provider metadata for OpenCandle,
+  Yahoo Finance, and Alternative.me.
 - [x] OpenCandle plugin allowlists only `OPENCANDLE_ROOT`.
 - [x] Disabled OpenCandle is omitted from app-server MCP projection.
 - [x] Enabled OpenCandle with missing `OPENCANDLE_ROOT` reports `missing_env`.
@@ -36,10 +38,9 @@ Date started: 2026-05-14
   name.
 - [x] `/plugin status opencandle` renders provider and env names without env
   values or raw MCP command args.
-- [x] Fixture MCP call returns bounded content and structured content without a
-  live network call.
-- [x] Production provider path rejects missing `OPENCANDLE_ROOT` without falling
-  back to a developer-specific path.
+- [x] Fixture adapter module loads without a live network call.
+- [x] Production adapter path rejects missing, relative, or unbuilt
+  `OPENCANDLE_ROOT` without falling back to a developer-specific path.
 
 Automated evidence:
 
@@ -52,12 +53,13 @@ Probe evidence:
 
 - `OPENCANDLE_ROOT=/absolute/path/to/OpenCandle bun run spike:opencandle-mcp`:
   passed on 2026-05-14. The `opencandle` MCP server was discovered and the
-  direct diagnostic `get_fear_greed` call succeeded.
+  status listed `get_stock_quote`, `search_ticker`, and `get_fear_greed`; the
+  direct diagnostic `get_stock_quote` call succeeded.
 - `OPENCANDLE_ROOT=/absolute/path/to/OpenCandle CODEXCLAW_MCP_PROBE_COPY_AUTH=1
   CODEXCLAW_MCP_PROBE_TURN=1 bun run spike:opencandle-mcp`: passed on
   2026-05-14. The probe copied only `auth.json` into a temporary `CODEX_HOME`,
-  completed a normal turn, observed two MCP events, and declined MCP elicitation
-  fail-closed.
+  completed a normal turn using `get_stock_quote`, observed two MCP events, and
+  declined MCP elicitation fail-closed.
 
 ## Manual Validation
 
@@ -68,6 +70,7 @@ Probe evidence:
    export CODEXCLAW_PLUGIN_DIRS=local-plugins
    export CODEXCLAW_PLUGIN_SUPERVISION_ENABLED=true
    export OPENCANDLE_ROOT=/absolute/path/to/OpenCandle
+   cd "$OPENCANDLE_ROOT" && npm run build
    ```
 
 2. Start app-server and a channel or CLI adapter.
@@ -99,11 +102,11 @@ Probe evidence:
 
 6. Validate turn-mediated tool use.
 
-   - [ ] Ask Codex in a normal turn to use the `get_fear_greed` MCP tool from
+   - [ ] Ask Codex in a normal turn to use the `get_stock_quote` MCP tool from
      server `opencandle`.
    - [ ] Confirm Codex discovers and invokes the MCP tool during the turn.
-   - [ ] Confirm the response reports only the index value/classification or a
-     bounded failure.
+   - [ ] Confirm the response reports only bounded quote metadata or a bounded
+     failure.
 
 7. Inspect metadata-only boundary.
 

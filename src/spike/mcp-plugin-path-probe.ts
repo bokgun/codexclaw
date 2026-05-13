@@ -20,6 +20,7 @@ type ProbeTarget = {
   serverName: string;
   serverInfoName: string;
   toolName: string;
+  command: string;
   serverPath: string;
   directArguments: JsonObject;
   malformedArguments: JsonObject;
@@ -28,11 +29,12 @@ type ProbeTarget = {
 };
 
 const root = process.cwd();
+const bunCommand = process.execPath;
 const target = selectTarget();
 const runTurnProbe = process.env.CODEXCLAW_MCP_PROBE_TURN === "1";
 const copyAuth = process.env.CODEXCLAW_MCP_PROBE_COPY_AUTH === "1";
+const debugAppLogs = process.env.CODEXCLAW_MCP_PROBE_DEBUG_APP_LOGS === "1";
 const codexCommand = process.env.CODEXCLAW_MCP_PROBE_CODEX ?? "codex";
-const bunCommand = process.execPath;
 
 const observations: ProbeObservation[] = [];
 
@@ -79,6 +81,7 @@ try {
     const status = await probeMethod(client, "mcpServerStatus/list", { detail: "full", limit: 20 });
     const targetReady = isTargetServerReady(status);
     console.error(`[probe] target_server_ready=${targetReady ? "yes" : "no"}`);
+    console.error(`[probe] target_status_candidates=${summarizeMcpServerStatuses(status)}`);
 
     let threadId: string | undefined;
     try {
@@ -242,10 +245,31 @@ function isTargetServerReady(value: JsonValue | undefined): boolean {
   return data.some((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const status = item as JsonObject;
-    if (status.name !== target.serverName) return false;
+    if (status.name !== target.serverName && status.name !== target.serverInfoName) return false;
     const tools = status.tools;
-    return !!tools && typeof tools === "object" && !Array.isArray(tools) && target.toolName in tools;
+    if (!tools || typeof tools !== "object" || Array.isArray(tools)) return false;
+    return target.toolName in tools || Object.keys(tools).length === 0;
   });
+}
+
+function summarizeMcpServerStatuses(value: JsonValue | undefined): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "none";
+  const data = (value as JsonObject).data;
+  if (!Array.isArray(data)) return "none";
+
+  return data
+    .filter((item): item is JsonObject => !!item && typeof item === "object" && !Array.isArray(item))
+    .map((status) => {
+      const name = typeof status.name === "string" ? status.name : "unknown";
+      const tools = status.tools;
+      const toolNames = tools && typeof tools === "object" && !Array.isArray(tools) ? Object.keys(tools).sort().join("|") : "none";
+      const startupStatus = status.startupStatus;
+      const state = startupStatus && typeof startupStatus === "object" && !Array.isArray(startupStatus)
+        ? String((startupStatus as JsonObject).status ?? "unknown")
+        : "unknown";
+      return `${name}{state=${state},tools=${toolNames},fields=${Object.keys(status).sort().join("|")}}`;
+    })
+    .join(",");
 }
 
 async function startIsolatedAppServer(): Promise<{
@@ -272,7 +296,7 @@ async function startIsolatedAppServer(): Promise<{
       join(codexDir, "config.toml"),
       [
         `[mcp_servers.${target.serverName}]`,
-        `command = ${tomlString(bunCommand)}`,
+        `command = ${tomlString(target.command)}`,
         `args = [${tomlString(target.serverPath)}]`,
         ...targetEnvTomlLines(),
         ""
@@ -292,19 +316,29 @@ async function startIsolatedAppServer(): Promise<{
     );
 
     const appServerLogCounts = { stdout: 0, stderr: 0 };
+    const appServerLogSamples: string[] = [];
     child.stderr.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split(/\r?\n/)) {
-        if (line.trim()) appServerLogCounts.stderr += 1;
+        if (line.trim()) {
+          appServerLogCounts.stderr += 1;
+          if (debugAppLogs && appServerLogSamples.length < 12) appServerLogSamples.push(line.trim().slice(0, 500));
+        }
       }
     });
     child.stdout.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split(/\r?\n/)) {
-        if (line.trim()) appServerLogCounts.stdout += 1;
+        if (line.trim()) {
+          appServerLogCounts.stdout += 1;
+          if (debugAppLogs && appServerLogSamples.length < 12) appServerLogSamples.push(line.trim().slice(0, 500));
+        }
       }
     });
 
     await waitForPortOrExit(wsUrl, tokenFile, child);
     console.error(`[probe] app_server_logs stdout_lines=${appServerLogCounts.stdout} stderr_lines=${appServerLogCounts.stderr}`);
+    if (debugAppLogs) {
+      for (const line of appServerLogSamples) console.error(`[probe] app_server_log_sample=${line}`);
+    }
     return { home, stateDir, tokenFile, wsUrl, process: child };
   } catch (error) {
     if (child) await stopProcess(child);
@@ -522,7 +556,7 @@ function targetEnvTomlLines(): string[] {
 }
 
 function summarizeError(error: unknown): string {
-  if (error instanceof Error) return `Error(${summarizeValue(error.message)})`;
+  if (error instanceof Error) return `Error(${JSON.stringify(error.message.slice(0, 240))})`;
   return summarizeValue(error as JsonValue);
 }
 
@@ -543,6 +577,7 @@ function selectTarget(): ProbeTarget {
       serverName: "codexclaw-toy",
       serverInfoName: "codexclaw-mcp-toy",
       toolName: "codexclaw_echo_shape",
+      command: bunCommand,
       serverPath: resolve(root, "src/spike/mcp-toy-server.ts"),
       directArguments: { label: "MCP_PATH_SPIKE" },
       malformedArguments: { label: "" },
@@ -556,13 +591,14 @@ function selectTarget(): ProbeTarget {
     return {
       id,
       serverName: "opencandle",
-      serverInfoName: "codexclaw-opencandle-mcp",
-      toolName: "get_fear_greed",
+      serverInfoName: "opencandle-codexclaw-mcp",
+      toolName: "get_stock_quote",
+      command: bunCommand,
       serverPath: resolve(root, "plugins/opencandle/server.ts"),
-      directArguments: {},
-      malformedArguments: { unexpected: true },
+      directArguments: { symbol: "AAPL" },
+      malformedArguments: { symbol: 123 },
       turnPrompt:
-        "Use the MCP tool get_fear_greed on server opencandle to fetch the current crypto Fear and Greed index, then summarize only whether the MCP tool call succeeded and the returned classification.",
+        "Use the MCP tool get_stock_quote on server opencandle to fetch a quote for AAPL, then summarize only whether the MCP tool call succeeded and the returned symbol.",
       requiresNetworkProvider: true
     };
   }

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "opencandle",
   "displayName": "OpenCandle",
-  "version": "0.1.0",
-  "description": "OpenCandle market metadata MCP tools.",
+  "version": "0.2.0",
+  "description": "OpenCandle market data MCP tools.",
   "mcp": {
     "serverName": "opencandle",
     "command": "__CODEXCLAW_BUN_COMMAND__",
@@ -12,11 +12,21 @@
       {
         "name": "OPENCANDLE_ROOT",
         "required": true,
-        "description": "Absolute path to a local OpenCandle checkout."
+        "description": "Absolute path to a local OpenCandle checkout with dist/codexclaw/mcp-server.js built."
       }
     ]
   },
   "tools": [
+    {
+      "name": "get_stock_quote",
+      "title": "Stock Quote",
+      "description": "Return a current stock quote through OpenCandle's market data provider."
+    },
+    {
+      "name": "search_ticker",
+      "title": "Ticker Search",
+      "description": "Search ticker symbols through OpenCandle's market data provider."
+    },
     {
       "name": "get_fear_greed",
       "title": "Fear and Greed",
@@ -25,7 +35,7 @@
   ],
   "security": {
     "network": "declared",
-    "providers": ["OpenCandle", "alternative.me"],
+    "providers": ["OpenCandle", "Yahoo Finance", "Alternative.me"],
     "envAllowlist": ["OPENCANDLE_ROOT"]
   }
 }

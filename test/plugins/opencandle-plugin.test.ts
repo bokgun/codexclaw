@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,12 +12,13 @@ import {
   validatePluginDescriptor
 } from "../../src/plugins/index.js";
 import { PointerStore } from "../../src/store/pointer-store.js";
-import { createOpenCandleMcpServer } from "../../plugins/opencandle/server.js";
+import { loadOpenCandleMcpServerModule, resolveOpenCandleMcpServerPath } from "../../plugins/opencandle/server.js";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const pluginRoot = join(repoRoot, "plugins");
 const templatePath = join(pluginRoot, "opencandle", "codexclaw-plugin.template.json");
-const serverPath = join(pluginRoot, "opencandle", "server.ts");
+const wrapperServerPath = join(pluginRoot, "opencandle", "server.ts");
+const serverPath = wrapperServerPath;
 const roots: string[] = [];
 
 afterEach(() => {
@@ -45,17 +46,17 @@ describe("OpenCandle production plugin", () => {
 
     expect(result.descriptor).toMatchObject({
       id: "opencandle",
-      version: "0.1.0",
+      version: "0.2.0",
       mcp: {
         serverName: "opencandle",
         command: process.execPath,
         args: [serverPath],
         env: [{ name: "OPENCANDLE_ROOT", required: true }]
       },
-      tools: [{ name: "get_fear_greed" }],
+      tools: [{ name: "get_stock_quote" }, { name: "search_ticker" }, { name: "get_fear_greed" }],
       security: {
         network: "declared",
-        providers: ["OpenCandle", "alternative.me"],
+        providers: ["OpenCandle", "Yahoo Finance", "Alternative.me"],
         envAllowlist: ["OPENCANDLE_ROOT"],
         elicitation: "fail_closed"
       }
@@ -77,7 +78,7 @@ describe("OpenCandle production plugin", () => {
       expect(entry).toMatchObject({ enabled: false, status: "available" });
       expect(projectAppServerMcpConfig(disabled.entries, {}).mcpServers.find((server) => server.serverName === "opencandle")).toBeUndefined();
 
-      store.setPluginEnablement({ pluginId: "opencandle", version: "0.1.0", enabled: true });
+      store.setPluginEnablement({ pluginId: "opencandle", version: "0.2.0", enabled: true });
       const missing = discoverLocalPluginRegistry({ config: pluginConfig(root), store, env: {} });
       const missingEntry = missing.entries.find((item) => item.id === "opencandle");
       expect(missingEntry).toMatchObject({ enabled: true, status: "missing_env", missingEnvNames: ["OPENCANDLE_ROOT"] });
@@ -94,7 +95,7 @@ describe("OpenCandle production plugin", () => {
     await materializeDescriptor(join(root, "opencandle", "codexclaw-plugin.json"));
     const store = new PointerStore();
     try {
-      store.setPluginEnablement({ pluginId: "opencandle", version: "0.1.0", enabled: true });
+      store.setPluginEnablement({ pluginId: "opencandle", version: "0.2.0", enabled: true });
       const env = { OPENCANDLE_ROOT: "/fixture/opencandle", NOT_ALLOWLISTED: "secret" };
       const registry = discoverLocalPluginRegistry({ config: pluginConfig(root), store, env });
       const projection = projectAppServerMcpConfig(registry.entries, env);
@@ -117,7 +118,7 @@ describe("OpenCandle production plugin", () => {
     await materializeDescriptor(join(root, "opencandle", "codexclaw-plugin.json"));
     const store = new PointerStore();
     try {
-      store.setPluginEnablement({ pluginId: "opencandle", version: "0.1.0", enabled: true });
+      store.setPluginEnablement({ pluginId: "opencandle", version: "0.2.0", enabled: true });
       const service = createPluginCommandService({
         pluginConfig: pluginConfig(root),
         store,
@@ -126,109 +127,50 @@ describe("OpenCandle production plugin", () => {
 
       const status = await service.status("opencandle");
       expect(status).toContain("Network: declared");
-      expect(status).toContain("Providers: OpenCandle, alternative.me");
+      expect(status).toContain("Providers: OpenCandle, Yahoo Finance, Alternative.me");
       expect(status).toContain("Env names: OPENCANDLE_ROOT");
+      expect(status).toContain("get_stock_quote");
+      expect(status).toContain("search_ticker");
       expect(status).toContain("get_fear_greed");
       expect(status).not.toContain("/fixture/opencandle");
-      expect(status).not.toContain(serverPath);
+      expect(status).not.toContain(wrapperServerPath);
       expect(status).not.toContain(process.execPath);
     } finally {
       store.close();
     }
   });
 
-  test("fixture provider returns bounded MCP content and structuredContent without live network", async () => {
-    const server = createOpenCandleMcpServer({
-      provider: {
-        async getFearGreedIndex() {
-          return { value: 72.4, label: "provider text is ignored" };
-        }
-      }
-    });
-
-    const result = await server.dispatch("tools/call", {
-      name: "get_fear_greed",
-      arguments: {}
-    });
-
-    expect(result).toEqual({
-      content: [
-        {
-          type: "text",
-          text: "Crypto Fear and Greed: 72 (Greed)"
-        }
-      ],
-      structuredContent: {
-        value: 72,
-        label: "Greed",
-        provider: "opencandle",
-        source: "alternative.me"
-      },
-      isError: false
-    });
-    expect(JSON.stringify(result)).not.toContain("provider text is ignored");
-  });
-
-  test("rejects malformed arguments and invalid provider values", async () => {
-    const server = createOpenCandleMcpServer({
-      provider: {
-        async getFearGreedIndex() {
-          return { value: 50, label: "Neutral" };
-        }
-      }
-    });
-
-    await expect(server.dispatch("tools/call", { name: "get_fear_greed", arguments: "bad" })).rejects.toThrow(
-      "arguments must be an object"
+  test("delegated server resolves the built OpenCandle MCP adapter", async () => {
+    const opencandleRoot = tempRoot();
+    const adapterDir = join(opencandleRoot, "dist", "codexclaw");
+    mkdirSync(adapterDir, { recursive: true });
+    writeFileSync(
+      join(adapterDir, "mcp-server.js"),
+      "export async function handleJsonRpcRequest() {}\n",
+      "utf8"
     );
-    await expect(
-      createOpenCandleMcpServer({
-        provider: {
-          async getFearGreedIndex() {
-            return { value: 112.8, label: "Extreme Greed" };
-          }
-        }
-      }).dispatch("tools/call", { name: "get_fear_greed", arguments: {} })
-    ).rejects.toThrow("invalid value");
+
+    expect(resolveOpenCandleMcpServerPath({ env: { OPENCANDLE_ROOT: opencandleRoot } })).toBe(
+      join(realpathSync(opencandleRoot), "dist", "codexclaw", "mcp-server.js")
+    );
+    await expect(loadOpenCandleMcpServerModule({ env: { OPENCANDLE_ROOT: opencandleRoot } })).resolves.toEqual({
+      handleJsonRpcRequest: expect.any(Function)
+    });
   });
 
-  test("production provider rejects missing or relative OPENCANDLE_ROOT with no hard-coded fallback", async () => {
-    const source = readFileSync(serverPath, "utf8");
+  test("delegated server rejects missing, relative, or unbuilt OPENCANDLE_ROOT with no hard-coded fallback", async () => {
+    const source = readFileSync(wrapperServerPath, "utf8");
     expect(source).not.toContain("/Users/bokgun/Workspace/OpenCandle");
 
-    const missing = createOpenCandleMcpServer({ env: {} });
-    const missingResponse = await missing.handleMessage({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: "get_fear_greed", arguments: {} }
-    });
-
-    expect(missingResponse).toEqual({
-      jsonrpc: "2.0",
-      id: 1,
-      error: {
-        code: -32000,
-        message: "OPENCANDLE_ROOT is required and must point to a local OpenCandle checkout."
-      }
-    });
-
-    const relative = createOpenCandleMcpServer({ env: { OPENCANDLE_ROOT: "relative/opencandle" } });
-    const relativeResponse = await relative.handleMessage({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name: "get_fear_greed", arguments: {} }
-    });
-
-    expect(relativeResponse).toEqual({
-      jsonrpc: "2.0",
-      id: 2,
-      error: {
-        code: -32000,
-        message: "OPENCANDLE_ROOT must be an absolute path to a local OpenCandle checkout."
-      }
-    });
+    expect(() => resolveOpenCandleMcpServerPath({ env: {} })).toThrow(
+      "OPENCANDLE_ROOT is required and must point to a local OpenCandle checkout."
+    );
+    expect(() => resolveOpenCandleMcpServerPath({ env: { OPENCANDLE_ROOT: "relative/opencandle" } })).toThrow(
+      "OPENCANDLE_ROOT must be an absolute path to a local OpenCandle checkout."
+    );
+    expect(() => resolveOpenCandleMcpServerPath({ env: { OPENCANDLE_ROOT: tempRoot() } })).toThrow(
+      "OpenCandle MCP adapter was not found. Run `npm run build` in OPENCANDLE_ROOT first."
+    );
   });
 });
 

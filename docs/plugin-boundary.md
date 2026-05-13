@@ -117,19 +117,23 @@ M5e adds OpenCandle as the first production-style local MCP plugin slice:
   `local-plugins/opencandle/codexclaw-plugin.json` with absolute Bun and server
   paths;
 - the MCP server entrypoint is `plugins/opencandle/server.ts`;
-- it exposes one tool, `get_fear_greed`;
-- it uses OpenCandle provider code from an absolute local checkout path named by
-  `OPENCANDLE_ROOT`;
+- it exposes the OpenCandle MCP adapter tools `get_stock_quote`,
+  `search_ticker`, and `get_fear_greed`;
+- it delegates to `dist/codexclaw/mcp-server.js` from an absolute local
+  OpenCandle checkout path named by `OPENCANDLE_ROOT`, while the codexclaw
+  wrapper emits newline-delimited JSON-RPC for the pinned app-server MCP path;
 - it requires network access to the provider used by OpenCandle;
-- it declares providers `OpenCandle` and `alternative.me`;
+- it declares providers `OpenCandle`, `Yahoo Finance`, and `Alternative.me`;
 - it allowlists only `OPENCANDLE_ROOT`;
 - it rejects missing `OPENCANDLE_ROOT` without falling back to a
   developer-specific local path;
+- it rejects an unbuilt OpenCandle checkout with an actionable `npm run build`
+  error;
 - it does not persist provider responses in codexclaw;
-- fixture tests cover bounded MCP content and structured content without live
+- fixture tests cover descriptor projection and adapter resolution without live
   network access.
 
 The OpenCandle slice remains intentionally narrow. It does not add financial
-advice workflows, the full OpenCandle tool surface, a marketplace, remote
-provider execution, or MCP elicitation UX. Authenticated turn-mediated tool use
-is tracked in `docs/M5-plugin-manual-checklist.md` before M5 is marked complete.
+advice workflows, a marketplace, remote provider execution, or MCP elicitation
+UX. Authenticated turn-mediated tool use is tracked in
+`docs/M5-plugin-manual-checklist.md` before M5 is marked complete.

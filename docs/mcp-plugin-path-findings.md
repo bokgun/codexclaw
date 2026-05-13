@@ -121,13 +121,16 @@ The OpenCandle probe now targets the production slice server at
 It exposes:
 
 - configured server name: `opencandle`
-- MCP serverInfo name: `codexclaw-opencandle-mcp`
-- tool name: `get_fear_greed`
-- provider: OpenCandle `getFearGreedIndex`
-- network provider: yes, OpenCandle currently uses `api.alternative.me`
+- MCP serverInfo name: `opencandle-codexclaw-mcp`
+- probe tool name: `get_stock_quote`
+- adapter tools: `get_stock_quote`, `search_ticker`, `get_fear_greed`
+- provider metadata: OpenCandle, Yahoo Finance, Alternative.me
+- network provider: yes
 
-The production slice server imports OpenCandle provider code from
-`OPENCANDLE_ROOT`. The value must be an absolute path that resolves to an
+The production slice server delegates to OpenCandle's built MCP adapter at
+`OPENCANDLE_ROOT/dist/codexclaw/mcp-server.js`. It calls OpenCandle's adapter
+handler and emits newline-delimited JSON-RPC responses for the pinned Codex
+app-server MCP path. The value must be an absolute path that resolves to an
 existing local OpenCandle checkout; there is no developer-specific fallback
 path. `OPENCANDLE_ROOT` is the only OpenCandle-specific environment variable
 allowlisted by the descriptor.
@@ -208,13 +211,33 @@ Observed on 2026-05-12:
 The probe records event counts only. It does not persist conversation text,
 tool arguments, tool output, provider response bodies, or auth material.
 
-Observed again on 2026-05-14 against the M5e production OpenCandle plugin
+Observed on 2026-05-14 against the initial M5e production OpenCandle plugin
 server path:
 
 - the probe wrote `OPENCANDLE_ROOT` into the temporary app-server MCP config
   only for the OpenCandle target;
 - `opencandle` server discovery succeeded;
 - direct diagnostic `mcpServer/tool/call` for `get_fear_greed` succeeded;
+- authenticated normal turn-mediated MCP use completed;
+- two MCP events were observed during the normal turn;
+- `mcpServer/elicitation/request` was received and declined fail-closed;
+- raw MCP arguments, raw tool output, provider response bodies, conversation
+  bodies, and auth material were not recorded by the probe.
+
+The follow-up OpenCandle adapter delegation path changes the OpenCandle target
+to `get_stock_quote` with `{ symbol: "AAPL" }`; fresh probe evidence should be
+recorded before marking the adapter-backed slice complete.
+
+Observed again on 2026-05-14 after switching the production slice to delegate
+to OpenCandle's built adapter:
+
+- the probe wrote `OPENCANDLE_ROOT` into the temporary app-server MCP config
+  only for the OpenCandle target;
+- `opencandle` server discovery succeeded;
+- `mcpServerStatus/list` reported `get_stock_quote`, `search_ticker`, and
+  `get_fear_greed`;
+- direct diagnostic `mcpServer/tool/call` for `get_stock_quote` with
+  `{ symbol: "AAPL" }` succeeded;
 - authenticated normal turn-mediated MCP use completed;
 - two MCP events were observed during the normal turn;
 - `mcpServer/elicitation/request` was received and declined fail-closed;
