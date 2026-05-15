@@ -88,10 +88,10 @@ CODEXCLAW_CODEX_WS=ws://127.0.0.1:4500 bun run cli
 The Docker reference pins Codex CLI `0.128.0`, runs the app-server as a
 non-root user, provides the token as a read-only Docker secret, keeps Codex auth
 in an isolated container volume, and does not mount codexclaw state or SQLite
-into the app-server container. Apple Container is documented-only until a smoke
-run is recorded. On Linux, make sure the mounted workspace is writable by
-container UID/GID `10001`; the write probe above verifies that before app-server
-startup.
+into the app-server container. Apple Container has a recorded base app-server
+smoke path in [Apple Container Checklist](docs/apple-container-checklist.md).
+On Linux, make sure the mounted workspace is writable by container UID/GID
+`10001`; the write probe above verifies that before app-server startup.
 
 Apple Container reference path:
 
@@ -153,6 +153,10 @@ Required environment:
 - `CODEXCLAW_STATE_DIR`: codexclaw-owned state directory. Defaults to `~/.codexclaw`, supports `~/.codexclaw/...`, and is created with private permissions. Workspace-internal state requires explicit `CODEXCLAW_DEPLOYMENT_MODE=local_dev` and `CODEXCLAW_ALLOW_WORKSPACE_INTERNAL_STATE=true`.
 - `CODEXCLAW_CODEX_TOKEN_FILE`: file containing the bearer token used by the app-server. Defaults to `<state-dir>/codex.token`, which `bun run start:codex` creates automatically for local development. Relative paths resolve from the state dir.
 - `CODEXCLAW_DB`: SQLite database path for codexclaw pointers, approvals, tasks, and prefs. Defaults to `<state-dir>/codexclaw.sqlite`. Relative paths resolve from the state dir.
+- `CODEXCLAW_PLUGIN_DIRS`: optional comma-separated local plugin descriptor directories. Relative paths resolve from `CODEXCLAW_WORKSPACE_ROOT`; OpenCandle materialization writes to `local-plugins`.
+- `CODEXCLAW_PLUGIN_SUPERVISION_ENABLED`: set to `true` to let codexclaw project enabled local MCP plugins into app-server MCP config. Defaults to `false`.
+- `CODEXCLAW_PLUGIN_MANAGED_CODEX_HOME`: optional managed Codex home for plugin-capable supervision. Defaults to `<state-dir>/codex-home` when supervision is enabled and must stay under `CODEXCLAW_STATE_DIR`.
+- `OPENCANDLE_ROOT`: required only for the OpenCandle local plugin. It must be an absolute path to a local OpenCandle checkout visible to the runtime that starts the MCP server.
 - `CODEXCLAW_VERIFIED_THREAD_FORK`, `CODEXCLAW_VERIFIED_THREAD_ARCHIVE`, `CODEXCLAW_VERIFIED_THREAD_UNARCHIVE`: keep false unless an external spike has verified the pinned app-server mutating thread methods in your environment. codexclaw's boot probe stays metadata-only and does not create, archive, or unarchive disposable threads.
 
 `CODEXCLAW_WORKSPACE_ROOT` and `CODEXCLAW_STATE_DIR` are intentionally
@@ -174,6 +178,74 @@ Discord adapters build on. The older spike scripts remain available under
 - [Logging](docs/logging.md)
 - [Skills inspection](docs/skills.md)
 - [M4 manual checklist](docs/M4-manual-checklist.md)
+- [M5 plugin checklist](docs/M5-plugin-manual-checklist.md)
+- [Plugin boundary](docs/plugin-boundary.md)
+
+## Local MCP Plugins
+
+codexclaw local plugins are MCP server descriptors managed by codexclaw and
+invoked by Codex app-server. They are disabled by default. codexclaw validates
+descriptor metadata, stores only enablement state, writes managed MCP config for
+the app-server runtime, and renders channel status. Codex app-server still owns
+MCP tool discovery and invocation during turns.
+
+Before enabling a plugin, review its command, arguments, env allowlist, network
+metadata, and provider metadata. codexclaw does not pass channel bot tokens,
+app-server bearer tokens, codexclaw SQLite paths, or Codex auth files to plugins
+by default, and it must not persist raw MCP arguments or raw MCP output.
+
+OpenCandle is the first production-style local plugin slice. It depends on a
+local OpenCandle checkout with its CodexClaw MCP adapter built:
+
+```sh
+export OPENCANDLE_ROOT=/absolute/path/to/OpenCandle
+cd "$OPENCANDLE_ROOT"
+npm run build
+```
+
+Materialize the local descriptor from the codexclaw checkout. The generated
+descriptor is ignored by git because it contains machine-local absolute command
+paths:
+
+```sh
+cd /absolute/path/to/codexclaw
+bun run plugin:materialize:opencandle
+export CODEXCLAW_PLUGIN_DIRS=local-plugins
+export CODEXCLAW_PLUGIN_SUPERVISION_ENABLED=true
+export OPENCANDLE_ROOT=/absolute/path/to/OpenCandle
+```
+
+The basic plugin quickstart assumes the local app-server helper or another
+runtime where the generated descriptor command, codexclaw checkout, Bun, and
+OpenCandle checkout are visible at the documented absolute paths. Containerized
+app-server deployments need the additional path and managed `CODEX_HOME` sharing
+notes in [Container reference](docs/deploy/container.md#local-mcp-plugins-in-containers).
+
+If plugin supervision uses a managed Codex home, authenticate that home
+explicitly. For local helper runs, the default managed home is under
+`CODEXCLAW_STATE_DIR/codex-home`:
+
+```sh
+export CODEXCLAW_STATE_DIR="${CODEXCLAW_STATE_DIR:-$HOME/.codexclaw}"
+CODEX_HOME="$CODEXCLAW_STATE_DIR/codex-home" codex login --device-auth
+```
+
+Start codexclaw and inspect the plugin before enabling it:
+
+```text
+/plugin list
+/plugin status opencandle
+/plugin enable opencandle
+/plugin enable opencandle --confirm
+/plugin disable opencandle
+```
+
+After confirmed enablement, ask Codex in a normal turn to use a bounded
+OpenCandle tool such as `get_stock_quote` from server `opencandle`. Use
+[M5 plugin checklist](docs/M5-plugin-manual-checklist.md) for the complete
+manual validation path and [Plugin boundary](docs/plugin-boundary.md) for the
+security model. Container-specific plugin notes are in
+[Container reference](docs/deploy/container.md#local-mcp-plugins-in-containers).
 
 ## Knowledge Wiki
 

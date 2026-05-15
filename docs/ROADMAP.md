@@ -284,8 +284,9 @@ spawn plugin commands.
 M5e's OpenCandle production plugin slice is implemented as a local MCP
 descriptor template and bounded server under `plugins/opencandle`; the local
 discoverable descriptor is generated with `bun run plugin:materialize:opencandle`.
-Full M5 completion is still gated on the manual authenticated turn-mediated
-validation recorded in `docs/M5-plugin-manual-checklist.md`.
+M5f documents the fresh-clone plugin path, security checklist, troubleshooting,
+and container notes. Full M5 completion is still gated on the manual
+channel-level validation recorded in `docs/M5-plugin-manual-checklist.md`.
 
 Non-goals:
 

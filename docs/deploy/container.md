@@ -4,11 +4,10 @@ This repository includes reference Docker artifacts for running
 `codex app-server` inside a container while keeping codexclaw on the host. The
 artifacts are deployment examples, not a production image publishing pipeline.
 
-Apple Container support is documented-only in this repository until a maintainer
-records a smoke run with Apple Container. Use the same mount, token, auth, and
-network boundaries described below if adapting the Docker image to that runtime.
-The Apple-specific smoke criteria live in
-[Apple Container Checklist](../apple-container-checklist.md).
+Apple Container has a recorded base app-server smoke path in this repository.
+Use the same mount, token, auth, and network boundaries described below if
+adapting the Docker image to that runtime. The Apple-specific smoke criteria
+live in [Apple Container Checklist](../apple-container-checklist.md).
 
 Use this as the recommended starting point for user-facing setup. The local
 loopback helper is convenient for development, but Telegram, Discord, shared
@@ -209,6 +208,85 @@ A read-only secret/config mount may be used instead only if it is narrowly
 scoped to Codex CLI authentication and does not include unrelated credentials.
 Do not mount `$HOME`, `~/.ssh`, cloud provider credential folders, or the
 codexclaw state directory as a shortcut.
+
+## Local MCP Plugins In Containers
+
+Local MCP plugin support keeps the same boundary as the base container path:
+codexclaw owns descriptor discovery and enablement, while Codex app-server owns
+MCP discovery and tool invocation. Plugins are disabled by default and should be
+enabled only after reviewing their descriptor, env allowlist, and
+network/provider metadata.
+
+The checked-in Docker and Apple Container reference paths isolate
+`codex app-server` for normal channel use. They do not, by themselves, make
+OpenCandle plugin execution available inside the app-server runtime: the Docker
+image installs Codex CLI and sandbox prerequisites, but not Bun or OpenCandle,
+and the base mount layout intentionally does not mount codexclaw state or a
+host-managed `CODEX_HOME` into the app-server container.
+
+For the OpenCandle slice, the app-server runtime that supervises MCP servers
+must be able to read the managed MCP config, run the generated descriptor
+command, load the codexclaw plugin server file, run Bun, and read
+`OPENCANDLE_ROOT`. Use one of these layouts:
+
+- Host/local helper: `OPENCANDLE_ROOT` points to a host OpenCandle checkout and
+  `bun run start:codex` runs on the same host.
+- Docker extension: build or mount a runtime that includes Bun, the codexclaw
+  checkout, the generated plugin descriptor command path, the managed
+  `CODEX_HOME/config.toml`, and the OpenCandle checkout. Set `OPENCANDLE_ROOT`
+  to the container-visible absolute path.
+- Apple Container extension: apply the same requirement with Apple
+  Container-visible paths and an authenticated Apple Container-owned Codex home.
+
+Keep the path rule explicit: the generated plugin descriptor contains absolute
+command paths, and the `OPENCANDLE_ROOT` env value must be valid in the runtime
+that app-server uses to start MCP servers. If the host and container cannot
+share the same absolute paths, materialize and validate the descriptor inside
+the runtime layout you will actually run.
+
+Mount plugin trust-boundary inputs read-only unless they are intentionally the
+Codex-editable workspace for that smoke. This includes the codexclaw checkout,
+the generated descriptor directory, the OpenCandle checkout, and any runtime
+tooling path used only to start the plugin. Do not mount a host global
+`CODEX_HOME`, the whole codexclaw state directory, the codexclaw SQLite
+database, SSH/cloud credentials, or broad host home directories into the
+app-server runtime.
+
+Do not bake Telegram or Discord tokens, app-server bearer tokens, Codex auth, or
+provider secrets into a plugin descriptor or image. Pass only reviewed,
+allowlisted plugin env names at runtime. For the OpenCandle slice, the only
+plugin-specific allowlisted env name is `OPENCANDLE_ROOT`.
+
+Plugin-capable app-server supervision uses a managed Codex home. For the base
+container recipes, that home is the isolated container auth volume. Authenticate
+it explicitly:
+
+```sh
+scripts/docker-compose-codex.sh run --rm codex-app-server codex login --device-auth
+```
+
+For Apple Container, use:
+
+```sh
+scripts/apple-container-codex.sh login
+```
+
+For local-helper plugin validation, configure host codexclaw with plugin
+discovery:
+
+```sh
+bun run plugin:materialize:opencandle
+export CODEXCLAW_PLUGIN_DIRS=local-plugins
+export CODEXCLAW_PLUGIN_SUPERVISION_ENABLED=true
+export OPENCANDLE_ROOT=/absolute/path/visible/to/app-server/OpenCandle
+```
+
+Validate through `/plugin list`, `/plugin status opencandle`, and the two-step
+`/plugin enable opencandle` then `/plugin enable opencandle --confirm` flow.
+If status reports `missing_env`, set the env in the runtime that starts
+app-server/plugin supervision. If app-server starts but tools are not
+discovered, inspect bounded MCP reload/status diagnostics and confirm the
+managed Codex home is authenticated.
 
 ## Runtime User And Filesystem
 

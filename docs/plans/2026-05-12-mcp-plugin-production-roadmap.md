@@ -101,6 +101,8 @@ Implemented in:
 
 ### M5b - Local Registry And Config Resolution
 
+Status: implemented.
+
 Goal: load explicitly enabled local plugin descriptors and resolve the app-server
 MCP config that codexclaw may pass to a supervised app-server session.
 
@@ -244,7 +246,8 @@ M5a-M5d.
 Scope:
 
 - local OpenCandle plugin descriptor;
-- one initial tool, likely `get_fear_greed`;
+- a bounded initial OpenCandle adapter surface: `get_stock_quote`,
+  `search_ticker`, and `get_fear_greed`;
 - provider/network metadata;
 - env allowlist;
 - bounded output rendering;
@@ -253,7 +256,8 @@ Scope:
 
 Non-goals:
 
-- full OpenCandle tool surface;
+- the full OpenCandle product surface beyond the bounded adapter tools listed
+  above;
 - financial advice workflows;
 - remote hosted provider execution;
 - plugin marketplace distribution.
@@ -278,6 +282,10 @@ Implemented in:
 - `docs/plugin-boundary.md`.
 
 ### M5f - Hardening And Release Documentation
+
+Status: implemented for README, boundary, checklist, container notes, and
+troubleshooting. M5 completion remains gated on the channel-level manual
+validation recorded in `docs/M5-plugin-manual-checklist.md`.
 
 Goal: make plugin operation supportable for a fresh clone user.
 

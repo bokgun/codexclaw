@@ -145,11 +145,10 @@ available only in the operator's private environment.
 
 - [ ] For non-loopback or external access, expose only WSS through the reverse
   proxy and keep `CODEXCLAW_DEPLOYMENT_MODE=reverse_proxy_wss`.
-- [ ] Treat Apple Container as documented-only unless the same build, run,
-  `/readyz`, CLI `/thread list`, CLI `/skills list`, CLI `/quit`, and optional
-  minimal prompt smoke were completed with Apple Container and recorded in the
-  release notes. Use the
-  [Apple Container Checklist](apple-container-checklist.md) for that runtime.
+- [x] Treat Apple Container as base app-server smoke-verified because build,
+  run, `/readyz`, CLI `/thread list`, CLI `/skills list`, and CLI `/quit` were
+  completed and recorded in [Apple Container Checklist](apple-container-checklist.md).
+  Optional minimal prompt and M5 plugin smoke remain separately tracked there.
 
 ## 4. App-Server Runtime Smoke
 

@@ -1,8 +1,8 @@
-# CodexClaw Plugin Boundary
+# codexclaw Plugin Boundary
 
-Status: draft policy for MCP-backed local plugins.
+Status: M5 local MCP plugin operating boundary.
 
-Date: 2026-05-12
+Date: 2026-05-15
 
 ## Minimal Plugin Unit
 
@@ -137,3 +137,29 @@ The OpenCandle slice remains intentionally narrow. It does not add financial
 advice workflows, a marketplace, remote provider execution, or MCP elicitation
 UX. Authenticated turn-mediated tool use is tracked in
 `docs/M5-plugin-manual-checklist.md` before M5 is marked complete.
+
+## Operator Security Checklist
+
+Before enabling a local MCP plugin:
+
+- confirm the descriptor file came from a local trusted source;
+- confirm the command path is absolute and points to the reviewed executable;
+- confirm command args do not include secrets, shell fragments, or host-specific
+  shortcuts that hide what will run;
+- confirm the env allowlist is minimal and does not include channel tokens,
+  app-server bearer tokens, Codex auth files, codexclaw state paths, SSH/cloud
+  credentials, or broad host secrets;
+- confirm the plugin's declared network and provider metadata are acceptable
+  for the current workspace and channel;
+- confirm MCP elicitation remains fail-closed unless a separate reviewed UX has
+  been implemented;
+- confirm duplicate plugin ids or MCP server names are resolved before
+  enablement;
+- confirm stale enablement after descriptor changes is inspected with
+  `/plugin status <id>` before retrying;
+- confirm the runtime boundary is appropriate for the plugin. For remote
+  channels, prefer the documented container path and avoid mounting broad host
+  homes or credential directories.
+
+If any item is unclear, keep the plugin disabled and use `/plugin status <id>`
+to inspect metadata before retrying enablement.

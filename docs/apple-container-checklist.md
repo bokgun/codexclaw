@@ -206,3 +206,47 @@ used during the smoke run.
   scripts/apple-container-codex.sh down
   ```
 - [x] Confirm the disposable workspace contains only expected files.
+
+## 9. Optional M5 Plugin Smoke
+
+This is separate from the base Apple Container app-server smoke above. Do not
+use this section to claim full M5 plugin completion unless the checks are
+actually run and dated.
+
+- [ ] Materialize the OpenCandle descriptor in the codexclaw checkout:
+
+  ```sh
+  bun run plugin:materialize:opencandle
+  ```
+
+- [ ] Configure plugin env in the runtime layout being tested:
+
+  ```sh
+  export CODEXCLAW_PLUGIN_DIRS=local-plugins
+  export CODEXCLAW_PLUGIN_SUPERVISION_ENABLED=true
+  export OPENCANDLE_ROOT=/absolute/path/to/OpenCandle
+  ```
+
+- [ ] Confirm the generated descriptor command, Bun runtime, codexclaw
+  checkout, managed Codex home/config, and `OPENCANDLE_ROOT` are visible to the
+  app-server runtime that starts MCP servers.
+- [ ] Confirm codexclaw, OpenCandle, generated descriptor inputs, and runtime
+  tooling mounts are read-only unless they are intentionally the Codex-editable
+  workspace for this smoke.
+- [ ] Confirm no host global `CODEX_HOME`, whole codexclaw state directory,
+  SQLite database, SSH/cloud credential directory, or broad host home directory
+  is mounted for plugin smoke.
+- [ ] Authenticate the managed plugin Codex home with `codex login --device-auth`
+  in the Apple Container-owned auth volume or the explicitly shared managed
+  home used for the plugin smoke.
+- [ ] Run `/plugin list`.
+- [ ] Run `/plugin status opencandle`.
+- [ ] Run `/plugin enable opencandle`.
+- [ ] Run `/plugin enable opencandle --confirm`.
+- [ ] Ask Codex in a normal turn to use `get_stock_quote` from server
+  `opencandle`.
+- [ ] Confirm codexclaw logs and SQLite state remain metadata-only and do not
+  contain raw MCP arguments, raw MCP output, env values, provider response
+  bodies, conversation bodies, diffs, or approval history.
+- [ ] Record whether the optional M5 plugin smoke was run separately from the
+  base Apple Container app-server smoke.
